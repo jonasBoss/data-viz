@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap, default, io::{BufRead, BufReader}, sync::mpsc::{self, Receiver, TryRecvError}, thread, time::Duration
+    collections::HashMap, default, io::{self, BufRead, BufReader}, sync::mpsc::{self, Receiver, TryRecvError}, thread, time::Duration
 };
 
 use eframe::egui;
@@ -46,14 +46,14 @@ impl MyApp {
         }
     }
 
-    fn spawn_reader(&mut self) {
+    fn spawn_reader(&mut self) -> Result<(), io::Error> {
         self.data.clear();
+        let port = serialport::new("/dev/ttyUSB0", 115200)
+            .timeout(Duration::from_millis(100))
+            .open()?;
+
         let (frame_tx, frame_rx) = mpsc::channel();
         thread::spawn(move || {
-            let port = serialport::new("/dev/ttyUSB0", 115200)
-                .timeout(Duration::from_millis(100))
-                .open()
-                .unwrap();
             let reader = BufReader::new(port);
             let mut reader = FrameReader::new(reader);
 
@@ -64,11 +64,42 @@ impl MyApp {
         });
 
         self.frame_rx = Some(frame_rx);
+        Ok(())
+    }
+
+    /// reads data from the mpsc
+    ///
+    /// **returns** true when data was recived
+    fn recive_data(&mut self) -> bool {
+        if let Some(ref ch) = self.frame_rx {
+            loop {
+                match ch.try_recv() {
+                    Ok(f) => {
+                        let v = self.data.entry(f.sensor_id).or_default().entry(f.board_id).or_default();
+                        v.push([f.timestamp as f64, f.value as f64]);
+                    }
+                    Err(TryRecvError::Disconnected) => {
+                        self.frame_rx = None;
+                        self.err = Some("Reader Disconected".into());
+                        return false;
+                    }
+                    Err(TryRecvError::Empty) => {
+                        
+                        return true;
+                    },
+                }
+            }
+        }
+        return false;
     }
 }
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if self.recive_data(){
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+
         egui::SidePanel::left("side_panel").show(ctx, |ui| {
             ui.heading("Data Viz");
             ui.horizontal(|ui| {
@@ -83,27 +114,8 @@ impl eframe::App for MyApp {
             ui.label(format!("Hello {}, age {}", self.name, self.age));
 
             if ui.button("Run").clicked() && self.frame_rx.is_none() {
-                self.spawn_reader();
-            }
-
-            if let Some(ref ch) = self.frame_rx {
-                loop {
-                    match ch.try_recv() {
-                        Ok(f) => {
-                            let v = self.data.entry(f.sensor_id).or_default().entry(f.board_id).or_default();
-                            v.push([f.timestamp as f64, f.value as f64]);
-                            //ui.label(format!("{f:?}"));
-                        }
-                        Err(TryRecvError::Disconnected) => {
-                            self.frame_rx = None;
-                            self.err = Some("Reader Disconected".into());
-                            break;
-                        }
-                        Err(TryRecvError::Empty) => {
-                            ctx.request_repaint_after(Duration::from_millis(100));
-                            break;
-                        },
-                    }
+                if let Err(e) =  self.spawn_reader(){
+                    self.err = Some(format!("{e}"));
                 }
             }
 
