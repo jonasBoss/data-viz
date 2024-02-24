@@ -26,7 +26,7 @@ fn main() -> Result<(), eframe::Error> {
 
 struct MyApp {
     path: String,
-    age: u32,
+    baud: u32,
     err: Option<String>,
     sensor_id: u8,
     frame_rx: Option<mpsc::Receiver<Frame>>,
@@ -38,7 +38,7 @@ impl MyApp {
     fn new(_cc: &eframe::CreationContext) -> Self {
         Self {
             path: "/dev/ttyUSB0".to_owned(),
-            age: 28,
+            baud: 115200,
             err: None,
             sensor_id: 1,
             frame_rx: None,
@@ -48,7 +48,7 @@ impl MyApp {
 
     fn spawn_reader(&mut self) -> Result<(), io::Error> {
         self.data.clear();
-        let port = serialport::new(self.path.clone(), 115200)
+        let port = serialport::new(self.path.clone(), self.baud)
             .timeout(Duration::from_millis(100))
             .open()?;
 
@@ -104,15 +104,15 @@ impl eframe::App for MyApp {
             ui.heading("Data Viz");
             egui::Grid::new("control_area").show(ui, |ui|{
                 ui.label("Port:");
-                ui.text_edit_singleline(&mut self.path);
+                egui::TextEdit::singleline(&mut self.path).min_size([100.0, 0.0].into()).show(ui);
                 ui.end_row();
 
                 ui.label("Baudrate:");
-                ui.label("placeholder");
+                ui.label(format!("{}",self.baud));
                 ui.end_row();
 
                 ui.label("");
-                if ui.button("Run").clicked() && self.frame_rx.is_none() {
+                if ui.button("Start reading").clicked() && self.frame_rx.is_none() {
                     if let Err(e) =  self.spawn_reader(){
                         self.err = Some(format!("{e}"));
                     }
