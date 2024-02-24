@@ -61,7 +61,7 @@ impl MyApp {
 
             loop {
                 let f = reader.next_frame().unwrap();
-                frame_tx.send(f).unwrap();
+                frame_tx.send(f).expect("Main Thread has dropped the reciever");
             }
         });
 
@@ -99,7 +99,10 @@ impl eframe::App for MyApp {
                             self.err = Some("Reader Disconected".into());
                             break;
                         }
-                        Err(TryRecvError::Empty) => break,
+                        Err(TryRecvError::Empty) => {
+                            ctx.request_repaint_after(Duration::from_millis(100));
+                            break;
+                        },
                     }
                 }
             }
