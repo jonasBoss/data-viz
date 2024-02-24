@@ -1,8 +1,35 @@
+use std::{
+    default,
+    io::{BufRead, BufReader},
+    thread,
+    time::Duration,
+};
+
 use eframe::egui;
 use egui_plot::{Legend, Line, Plot, PlotPoints};
+use log::{debug, error};
 
 fn main() -> Result<(), eframe::Error> {
     env_logger::init();
+
+    thread::spawn(|| {
+        let port = serialport::new("/dev/ttyUSB0", 115200)
+            .timeout(Duration::from_millis(100))
+            .open()
+            .unwrap();
+
+        let mut reader = BufReader::new(port);
+        let mut str_buf = String::with_capacity(64);
+        loop {
+            match reader.read_line(&mut str_buf) {
+                Ok(c) => {
+                    print!("foo:{c}: {str_buf}");
+                    str_buf.clear();
+                }
+                Err(e) => error!("{:?}", e),
+            };
+        }
+    });
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1024.0, 740.0]),
@@ -15,7 +42,7 @@ fn main() -> Result<(), eframe::Error> {
 struct MyApp {
     name: String,
     age: u32,
-    data: Vec<[f64; 2]>
+    data: Vec<[f64; 2]>,
 }
 
 impl MyApp {

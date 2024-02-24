@@ -7,7 +7,9 @@ edition = "2021"
 eframe = "0.26.2"
 egui_extras = {version="0.26.2", features= ["default", "image"]}
 egui_plot = "0.26.2"
-env_logger = { version = "0.11", default-features = false, features = [
+env_logger = { version = "0.11", features = [
     "auto-color",
     "humantime",
 ] }
+log = "0.4.20"
+serialport = "4.3.0"
