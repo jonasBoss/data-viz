@@ -2,7 +2,7 @@ use std::{
     collections::HashMap, default, io::{self, BufRead, BufReader}, sync::mpsc::{self, Receiver, TryRecvError}, thread, time::Duration
 };
 
-use eframe::egui;
+use eframe::egui::{self, Widget};
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 use log::{debug, error};
 use itertools::Itertools;
@@ -105,8 +105,9 @@ impl eframe::App for MyApp {
         egui::SidePanel::left("side_panel").show(ctx, |ui| {
             ui.heading("Data Viz");
             egui::Grid::new("control_area").show(ui, |ui|{
+                let size = [100.0, 0.0].into();
                 ui.label("Port:");
-                egui::TextEdit::singleline(&mut self.path).min_size([100.0, 0.0].into()).show(ui);
+                egui::TextEdit::singleline(&mut self.path).min_size(size).show(ui);
                 ui.end_row();
 
                 ui.label("Baudrate:");
@@ -114,14 +115,15 @@ impl eframe::App for MyApp {
                 ui.end_row();
 
                 ui.label("");
-                if ui.button("Start reading").clicked() && self.frame_rx.is_none() {
+                
+                if egui::Button::new("Start reading").min_size(size).ui(ui).clicked() && self.frame_rx.is_none() {
                     if let Err(e) =  self.spawn_reader(){
                         self.err = Some(format!("{e}"));
                     }
                 }
                 ui.end_row();
                 ui.label("");
-                if ui.button("Clear Data").clicked() {
+                if egui::Button::new("Clear Data").min_size(size).ui(ui).clicked() {
                     self.data.clear()
                 }
             });
