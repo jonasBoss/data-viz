@@ -102,25 +102,22 @@ impl eframe::App for MyApp {
 
         egui::SidePanel::left("side_panel").show(ctx, |ui| {
             ui.heading("Data Viz");
-            ui.horizontal(|ui| {
-                let name_label = ui.label("Port: ");
-                ui.text_edit_singleline(&mut self.path)
-                    .labelled_by(name_label.id);
-            });
-            ui.add(egui::Slider::new(&mut self.age, 0..=120).text("age"));
-            if ui.button("Increment").clicked() {
-                self.age += 1;
-            }
+            egui::Grid::new("control_area").show(ui, |ui|{
+                ui.label("Port:");
+                ui.text_edit_singleline(&mut self.path);
+                ui.end_row();
 
-            if ui.button("Run").clicked() && self.frame_rx.is_none() {
-                if let Err(e) =  self.spawn_reader(){
-                    self.err = Some(format!("{e}"));
+                ui.label("Baudrate:");
+                ui.label("placeholder");
+                ui.end_row();
+
+                ui.label("");
+                if ui.button("Run").clicked() && self.frame_rx.is_none() {
+                    if let Err(e) =  self.spawn_reader(){
+                        self.err = Some(format!("{e}"));
+                    }
                 }
-            }
-
-            while let Some(Ok(f)) = self.frame_rx.as_ref().map(Receiver::try_recv) {
-                ui.label(format!("{f:?}"));
-            }
+            });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
