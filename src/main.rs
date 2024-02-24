@@ -5,6 +5,8 @@ use std::{
 use eframe::egui;
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 use log::{debug, error};
+use itertools::Itertools;
+
 mod data_reader;
 
 use data_reader::{Frame, FrameReader};
@@ -123,7 +125,7 @@ impl eframe::App for MyApp {
                     self.data.clear()
                 }
             });
-            for id in self.data.keys(){
+            for id in self.data.keys().sorted(){
                 let mut selected = id == &self.sensor_id;
                 ui.toggle_value(&mut selected, format!("Show Sensor {id}"));
                 if selected {
