@@ -15,6 +15,7 @@ fn main() -> Result<(), eframe::Error> {
 struct MyApp {
     name: String,
     age: u32,
+    data: Vec<[f64; 2]>
 }
 
 impl MyApp {
@@ -22,6 +23,7 @@ impl MyApp {
         Self {
             name: "Jonas".to_owned(),
             age: 28,
+            data: vec![[0.0, 1.0], [2.0, 3.0], [3.0, 2.0]],
         }
     }
 }
@@ -45,10 +47,8 @@ impl eframe::App for MyApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             let plot = Plot::new("The Plot").legend(Legend::default());
 
-            let data = vec![[0.0, 1.0], [2.0, 3.0], [3.0, 2.0]];
-
             plot.show(ui, |plt_ui| {
-                plt_ui.line(Line::new(PlotPoints::from(data)).name("the data"));
+                plt_ui.line(Line::new(PlotPoints::from(self.data.clone())).name("the data"));
             });
         });
     }
