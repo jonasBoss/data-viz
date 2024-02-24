@@ -25,7 +25,7 @@ fn main() -> Result<(), eframe::Error> {
 }
 
 struct MyApp {
-    name: String,
+    path: String,
     age: u32,
     err: Option<String>,
     sensor_id: u8,
@@ -37,7 +37,7 @@ struct MyApp {
 impl MyApp {
     fn new(_cc: &eframe::CreationContext) -> Self {
         Self {
-            name: "Jonas".to_owned(),
+            path: "/dev/ttyUSB0".to_owned(),
             age: 28,
             err: None,
             sensor_id: 1,
@@ -48,7 +48,7 @@ impl MyApp {
 
     fn spawn_reader(&mut self) -> Result<(), io::Error> {
         self.data.clear();
-        let port = serialport::new("/dev/ttyUSB0", 115200)
+        let port = serialport::new(self.path.clone(), 115200)
             .timeout(Duration::from_millis(100))
             .open()?;
 
@@ -103,15 +103,14 @@ impl eframe::App for MyApp {
         egui::SidePanel::left("side_panel").show(ctx, |ui| {
             ui.heading("Data Viz");
             ui.horizontal(|ui| {
-                let name_label = ui.label("Your name: ");
-                ui.text_edit_singleline(&mut self.name)
+                let name_label = ui.label("Port: ");
+                ui.text_edit_singleline(&mut self.path)
                     .labelled_by(name_label.id);
             });
             ui.add(egui::Slider::new(&mut self.age, 0..=120).text("age"));
             if ui.button("Increment").clicked() {
                 self.age += 1;
             }
-            ui.label(format!("Hello {}, age {}", self.name, self.age));
 
             if ui.button("Run").clicked() && self.frame_rx.is_none() {
                 if let Err(e) =  self.spawn_reader(){
@@ -125,6 +124,7 @@ impl eframe::App for MyApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading(format!("Sensor: {}", self.sensor_id));
             if let Some(data) = self.data.get(&self.sensor_id){
                 let plot = Plot::new("sensor_plt").legend(Legend::default());
                 plot.show(ui, |plt_ui| {
