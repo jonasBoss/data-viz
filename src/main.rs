@@ -1,7 +1,7 @@
 use std::{
     default,
     io::{BufRead, BufReader},
-    sync::mpsc::{self, Receiver},
+    sync::mpsc::{self, Receiver, TryRecvError},
     thread,
     time::Duration,
 };
@@ -88,6 +88,22 @@ impl eframe::App for MyApp {
                 self.spawn_reader();
             }
 
+            if let Some(ref ch) = self.frame_rx {
+                loop {
+                    match ch.try_recv() {
+                        Ok(f) => {
+                            ui.label(format!("{f:?}"));
+                        }
+                        Err(TryRecvError::Disconnected) => {
+                            self.frame_rx = None;
+                            self.err = Some("Reader Disconected".into());
+                            break;
+                        }
+                        Err(TryRecvError::Empty) => break,
+                    }
+                }
+            }
+
             while let Some(Ok(f)) = self.frame_rx.as_ref().map(Receiver::try_recv) {
                 ui.label(format!("{f:?}"));
             }
@@ -101,8 +117,8 @@ impl eframe::App for MyApp {
             });
         });
 
-        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui|{
-            self.err.as_ref().map(|err|ui.label(err));
+        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+            self.err.as_ref().map(|err| ui.label(err));
         });
     }
 }
