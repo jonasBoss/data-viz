@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 eframe = "0.26.2"
 egui_extras = {version="0.26.2", features= ["default", "image"]}
+egui_plot = "0.26.2"
 env_logger = { version = "0.11", default-features = false, features = [
     "auto-color",
     "humantime",
