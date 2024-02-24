@@ -117,6 +117,11 @@ impl eframe::App for MyApp {
                         self.err = Some(format!("{e}"));
                     }
                 }
+                ui.end_row();
+                ui.label("");
+                if ui.button("Clear Data").clicked() {
+                    self.data.clear()
+                }
             });
             for id in self.data.keys(){
                 let mut selected = id == &self.sensor_id;
