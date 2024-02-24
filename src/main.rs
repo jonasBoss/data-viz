@@ -1,10 +1,14 @@
 use std::{
-    collections::HashMap, default, io::{self, BufRead, BufReader}, sync::mpsc::{self, Receiver, TryRecvError}, thread, time::Duration
+    collections::HashMap,
+    io::{self, BufReader},
+    sync::mpsc::{self, TryRecvError},
+    thread,
+    time::Duration,
 };
 
 use eframe::egui::{self, Widget};
 use egui_plot::{Legend, Line, Plot, PlotPoints};
-use log::{debug, error};
+
 use itertools::Itertools;
 
 mod data_reader;
@@ -33,7 +37,7 @@ struct MyApp {
     sensor_id: u8,
     frame_rx: Option<mpsc::Receiver<Frame>>,
     /// {sensor_id -> {board_id -> data}}
-    data: HashMap<u8, HashMap<u8, Vec<[f64; 2]>>> ,
+    data: HashMap<u8, HashMap<u8, Vec<[f64; 2]>>>,
 }
 
 impl MyApp {
@@ -44,7 +48,7 @@ impl MyApp {
             err: None,
             sensor_id: 1,
             frame_rx: None,
-            data:  Default::default(),
+            data: Default::default(),
         }
     }
 
@@ -61,7 +65,9 @@ impl MyApp {
 
             loop {
                 let f = reader.next_frame().unwrap();
-                frame_tx.send(f).expect("Main Thread has dropped the reciever");
+                frame_tx
+                    .send(f)
+                    .expect("Main Thread has dropped the reciever");
             }
         });
 
@@ -77,7 +83,12 @@ impl MyApp {
             loop {
                 match ch.try_recv() {
                     Ok(f) => {
-                        let v = self.data.entry(f.sensor_id).or_default().entry(f.board_id).or_default();
+                        let v = self
+                            .data
+                            .entry(f.sensor_id)
+                            .or_default()
+                            .entry(f.board_id)
+                            .or_default();
                         v.push([f.timestamp as f64, f.value as f64]);
                     }
                     Err(TryRecvError::Disconnected) => {
@@ -86,64 +97,76 @@ impl MyApp {
                         return false;
                     }
                     Err(TryRecvError::Empty) => {
-                        
                         return true;
-                    },
+                    }
                 }
             }
         }
-        return false;
+        false
     }
 }
 
 impl eframe::App for MyApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        if self.recive_data(){
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.recive_data() {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
 
         egui::SidePanel::left("side_panel").show(ctx, |ui| {
             ui.heading("Data Viz");
-            egui::Grid::new("control_area").show(ui, |ui|{
+            egui::Grid::new("control_area").show(ui, |ui| {
                 let size = [100.0, 0.0].into();
                 ui.label("Port:");
-                egui::TextEdit::singleline(&mut self.path).min_size(size).show(ui);
+                egui::TextEdit::singleline(&mut self.path)
+                    .min_size(size)
+                    .show(ui);
                 ui.end_row();
 
                 ui.label("Baudrate:");
-                ui.label(format!("{}",self.baud));
+                ui.label(format!("{}", self.baud));
                 ui.end_row();
 
                 ui.label("");
-                
-                if egui::Button::new("Start reading").min_size(size).ui(ui).clicked() && self.frame_rx.is_none() {
-                    if let Err(e) =  self.spawn_reader(){
+
+                if egui::Button::new("Start reading")
+                    .min_size(size)
+                    .ui(ui)
+                    .clicked()
+                    && self.frame_rx.is_none()
+                {
+                    if let Err(e) = self.spawn_reader() {
                         self.err = Some(format!("{e}"));
                     }
                 }
                 ui.end_row();
                 ui.label("");
-                if egui::Button::new("Clear Data").min_size(size).ui(ui).clicked() {
+                if egui::Button::new("Clear Data")
+                    .min_size(size)
+                    .ui(ui)
+                    .clicked()
+                {
                     self.data.clear()
                 }
             });
-            for id in self.data.keys().sorted(){
+            for id in self.data.keys().sorted() {
                 let mut selected = id == &self.sensor_id;
                 ui.toggle_value(&mut selected, format!("Show Sensor {id}"));
                 if selected {
                     self.sensor_id = *id;
                 }
             }
-            
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading(format!("Sensor: {}", self.sensor_id));
-            if let Some(data) = self.data.get(&self.sensor_id){
+            if let Some(data) = self.data.get(&self.sensor_id) {
                 let plot = Plot::new("sensor_plt").legend(Legend::default());
                 plot.show(ui, |plt_ui| {
                     for (board_id, data) in data.iter() {
-                        plt_ui.line(Line::new(PlotPoints::from(data.clone())).name(format!("Board id: {board_id}")));
+                        plt_ui.line(
+                            Line::new(PlotPoints::from(data.clone()))
+                                .name(format!("Board id: {board_id}")),
+                        );
                     }
                 });
             }
