@@ -118,6 +118,14 @@ impl eframe::App for MyApp {
                     }
                 }
             });
+            for id in self.data.keys(){
+                let mut selected = id == &self.sensor_id;
+                ui.toggle_value(&mut selected, format!("Show Sensor {id}"));
+                if selected {
+                    self.sensor_id = *id;
+                }
+            }
+            
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
