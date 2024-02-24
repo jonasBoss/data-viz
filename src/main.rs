@@ -8,6 +8,10 @@ use std::{
 use eframe::egui;
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 use log::{debug, error};
+mod data_reader;
+
+use data_reader::FrameReader;
+
 
 fn main() -> Result<(), eframe::Error> {
     env_logger::init();
@@ -17,17 +21,12 @@ fn main() -> Result<(), eframe::Error> {
             .timeout(Duration::from_millis(100))
             .open()
             .unwrap();
+        let reader = BufReader::new(port);
+        let mut reader = FrameReader::new(reader);
 
-        let mut reader = BufReader::new(port);
-        let mut str_buf = String::with_capacity(64);
         loop {
-            match reader.read_line(&mut str_buf) {
-                Ok(c) => {
-                    print!("foo:{c}: {str_buf}");
-                    str_buf.clear();
-                }
-                Err(e) => error!("{:?}", e),
-            };
+            let f = reader.next_frame().unwrap();
+            println!("{f:?}");
         }
     });
 

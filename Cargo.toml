@@ -11,5 +11,8 @@ env_logger = { version = "0.11", features = [
     "auto-color",
     "humantime",
 ] }
+lazy_static = "1.4.0"
 log = "0.4.20"
+regex = "1.10.3"
 serialport = "4.3.0"
+thiserror = "1.0.57"
