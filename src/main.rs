@@ -13,7 +13,8 @@ use itertools::Itertools;
 
 mod data_reader;
 
-use data_reader::{Frame, FrameReader};
+use data_reader::{Frame, FrameReader, FrameReaderError};
+use log::error;
 
 fn main() -> Result<(), eframe::Error> {
     env_logger::init();
@@ -30,12 +31,16 @@ fn main() -> Result<(), eframe::Error> {
     )
 }
 
+enum Commands {
+    STOP,
+}
+
 struct MyApp {
     path: String,
     baud: u32,
     err: Option<String>,
     sensor_id: u8,
-    frame_rx: Option<mpsc::Receiver<Frame>>,
+    reader_comm: Option<(mpsc::Receiver<Frame>, mpsc::Sender<Commands>)>,
     /// {sensor_id -> {board_id -> data}}
     data: HashMap<u8, HashMap<u8, Vec<[f64; 2]>>>,
 }
@@ -47,7 +52,7 @@ impl MyApp {
             baud: 115200,
             err: None,
             sensor_id: 1,
-            frame_rx: None,
+            reader_comm: None,
             data: Default::default(),
         }
     }
@@ -59,19 +64,44 @@ impl MyApp {
             .open()?;
 
         let (frame_tx, frame_rx) = mpsc::channel();
+        let (command_tx, command_rx) = mpsc::channel();
+
         thread::spawn(move || {
             let reader = BufReader::new(port);
             let mut reader = FrameReader::new(reader);
 
             loop {
-                let f = reader.next_frame().unwrap();
-                frame_tx
-                    .send(f)
-                    .expect("Main Thread has dropped the reciever");
+                match reader.next_frame() {
+                    Ok(f) => match frame_tx.send(f) {
+                        Ok(_) => (),
+                        Err(e) => {
+                            error!("Main Thread has dropped the reciever");
+                            panic!("{e:?}")
+                        }
+                    },
+                    Err(e @ FrameReaderError::RawDataError(_)) => error!("{e}"),
+                    Err(FrameReaderError::IOError(e)) => match e.kind() {
+                        io::ErrorKind::InvalidData => error!("{e}"),
+                        io::ErrorKind::TimedOut => error!("{e}"),
+                        _ => {
+                            error!("{e}");
+                            panic!("{e:?}")
+                        }
+                    },
+                }
+
+                match command_rx.try_recv() {
+                    Ok(Commands::STOP) => return,
+                    Err(TryRecvError::Empty) => (),
+                    Err(e @ TryRecvError::Disconnected) => {
+                        error!("Main thread dissapeared");
+                        panic!("{e:?}")
+                    }
+                }
             }
         });
 
-        self.frame_rx = Some(frame_rx);
+        self.reader_comm = Some((frame_rx, command_tx));
         Ok(())
     }
 
@@ -79,9 +109,9 @@ impl MyApp {
     ///
     /// **returns** true when data was recived
     fn recive_data(&mut self) -> bool {
-        if let Some(ref ch) = self.frame_rx {
+        if let Some(ref ch) = self.reader_comm {
             loop {
-                match ch.try_recv() {
+                match ch.0.try_recv() {
                     Ok(f) => {
                         let v = self
                             .data
@@ -92,7 +122,7 @@ impl MyApp {
                         v.push([f.timestamp as f64, f.value as f64]);
                     }
                     Err(TryRecvError::Disconnected) => {
-                        self.frame_rx = None;
+                        self.reader_comm = None;
                         self.err = Some("Reader Disconected".into());
                         return false;
                     }
@@ -128,16 +158,24 @@ impl eframe::App for MyApp {
 
                 ui.label("");
 
-                if egui::Button::new("Start reading")
+                if let Some((_, ref sender)) = self.reader_comm {
+                    if egui::Button::new("Stop reading")
+                        .min_size(size)
+                        .ui(ui)
+                        .clicked()
+                    {
+                        let _ = sender.send(Commands::STOP);
+                    }
+                } else if egui::Button::new("Start reading")
                     .min_size(size)
                     .ui(ui)
                     .clicked()
-                    && self.frame_rx.is_none()
                 {
                     if let Err(e) = self.spawn_reader() {
                         self.err = Some(format!("{e}"));
                     }
                 }
+
                 ui.end_row();
                 ui.label("");
                 if egui::Button::new("Clear Data")

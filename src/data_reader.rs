@@ -36,13 +36,9 @@ impl FrameReader {
     }
 
     pub fn next_frame(&mut self) -> Result<Frame, FrameReaderError> {
-        while let Err(e) = self.port.read_line(&mut self.buf) {
-            match e.kind() {
-                io::ErrorKind::InvalidData => error!("{e}"),
-                io::ErrorKind::TimedOut => error!("{e}"),
-                _ => return Err(FrameReaderError::IOError(e)),
-            }
-        }
+        self.port
+            .read_line(&mut self.buf)
+            .map_err(FrameReaderError::IOError)?;
         let res = self.buf.as_str().try_into();
         self.buf.clear();
         res
