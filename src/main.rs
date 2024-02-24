@@ -1,9 +1,5 @@
 use std::{
-    default,
-    io::{BufRead, BufReader},
-    sync::mpsc::{self, Receiver, TryRecvError},
-    thread,
-    time::Duration,
+    collections::HashMap, default, io::{BufRead, BufReader}, sync::mpsc::{self, Receiver, TryRecvError}, thread, time::Duration
 };
 
 use eframe::egui;
@@ -34,7 +30,8 @@ struct MyApp {
     err: Option<String>,
     sensor_id: u8,
     frame_rx: Option<mpsc::Receiver<Frame>>,
-    data: Vec<[f64; 2]>,
+    /// {sensor_id -> {board_id -> data}}
+    data: HashMap<u8, HashMap<u8, Vec<[f64; 2]>>> ,
 }
 
 impl MyApp {
@@ -45,11 +42,12 @@ impl MyApp {
             err: None,
             sensor_id: 1,
             frame_rx: None,
-            data: vec![[0.0, 1.0], [2.0, 3.0], [3.0, 2.0]],
+            data:  Default::default(),
         }
     }
 
     fn spawn_reader(&mut self) {
+        self.data.clear();
         let (frame_tx, frame_rx) = mpsc::channel();
         thread::spawn(move || {
             let port = serialport::new("/dev/ttyUSB0", 115200)
@@ -92,7 +90,9 @@ impl eframe::App for MyApp {
                 loop {
                     match ch.try_recv() {
                         Ok(f) => {
-                            ui.label(format!("{f:?}"));
+                            let v = self.data.entry(f.sensor_id).or_default().entry(f.board_id).or_default();
+                            v.push([f.timestamp as f64, f.value as f64]);
+                            //ui.label(format!("{f:?}"));
                         }
                         Err(TryRecvError::Disconnected) => {
                             self.frame_rx = None;
@@ -113,11 +113,14 @@ impl eframe::App for MyApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            let plot = Plot::new("The Plot").legend(Legend::default());
-
-            plot.show(ui, |plt_ui| {
-                plt_ui.line(Line::new(PlotPoints::from(self.data.clone())).name("the data"));
-            });
+            if let Some(data) = self.data.get(&self.sensor_id){
+                let plot = Plot::new("sensor_plt").legend(Legend::default());
+                plot.show(ui, |plt_ui| {
+                    for (board_id, data) in data.iter() {
+                        plt_ui.line(Line::new(PlotPoints::from(data.clone())).name(format!("Board id: {board_id}")));
+                    }
+                });
+            }
         });
 
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {

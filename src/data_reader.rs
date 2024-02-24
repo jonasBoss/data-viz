@@ -8,10 +8,10 @@ use thiserror::Error;
 
 #[derive(Debug)]
 pub struct Frame {
-    board_id: u8,
-    sensor_id: u8,
-    value: u16,
-    timestamp: u32,
+    pub board_id: u8,
+    pub sensor_id: u8,
+    pub value: u16,
+    pub timestamp: u32,
 }
 
 #[derive(Debug, Error)]
@@ -19,7 +19,7 @@ pub enum FrameReaderError {
     #[error("unable to parse into Frame: `{0}`")]
     RawDataError(String),
     #[error("{0}")]
-    IOError(io::Error)
+    IOError(io::Error),
 }
 
 pub struct FrameReader {
@@ -35,14 +35,14 @@ impl FrameReader {
         }
     }
 
-    pub fn next_frame(&mut self) -> Result<Frame, FrameReaderError>{
+    pub fn next_frame(&mut self) -> Result<Frame, FrameReaderError> {
         while let Err(e) = self.port.read_line(&mut self.buf) {
             match e.kind() {
                 io::ErrorKind::InvalidData => error!("{e}"),
                 io::ErrorKind::TimedOut => error!("{e}"),
-                _ => return  Err(FrameReaderError::IOError(e)),
+                _ => return Err(FrameReaderError::IOError(e)),
             }
-        };
+        }
         let res = self.buf.as_str().try_into();
         self.buf.clear();
         res
