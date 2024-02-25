@@ -22,6 +22,7 @@ pub enum FrameReaderError {
     IOError(io::Error),
 }
 
+#[derive(Debug)]
 pub struct FrameReader {
     port: BufReader<Box<dyn SerialPort>>,
     buf: String,
