@@ -1,9 +1,5 @@
 use std::{
-    collections::HashMap,
-    io::{self, BufReader},
-    sync::mpsc::{self, Receiver, Sender, TryRecvError},
-    thread,
-    time::Duration,
+    collections::HashMap, io::{self, BufReader}, sync::mpsc::{self, Receiver, Sender, TryRecvError}, thread, time::Duration
 };
 
 use eframe::egui::{self, Ui, Widget};
@@ -12,7 +8,7 @@ use itertools::Itertools;
 use log::error;
 use serialport::SerialPort;
 
-use crate::data_reader::{Frame, FrameReader, FrameReaderError};
+use crate::data_reader::{Frame, FrameReader};
 
 enum Commands {
     STOP,
@@ -23,36 +19,22 @@ pub struct MyApp {
     baud: u32,
     err: Option<String>,
     sensor_id: u8,
-    reader_comm: Option<(mpsc::Receiver<Frame>, mpsc::Sender<Commands>)>,
+    reader_comm: Option<(Receiver<io::Result<Frame>>, Sender<Commands>)>,
     /// {sensor_id -> {board_id -> data}}
     data: HashMap<u8, HashMap<u8, Vec<[f64; 2]>>>,
 }
 
 /// reader main function. Reads frames from the serial port and sends them into `frame_tx`
-fn reader(port: Box<dyn SerialPort>, frame_tx: Sender<Frame>, command_rx: Receiver<Commands>) {
+fn reader(
+    port: Box<dyn SerialPort>,
+    frame_tx: Sender<io::Result<Frame>>,
+    command_rx: Receiver<Commands>,
+) {
     let reader = BufReader::new(port);
     let mut reader = FrameReader::new(reader);
 
+    let mut error = false;
     loop {
-        match reader.next_frame() {
-            Ok(f) => match frame_tx.send(f) {
-                Ok(_) => (),
-                Err(e) => {
-                    error!("Main Thread has dropped the reciever");
-                    panic!("{e:?}")
-                }
-            },
-            Err(e @ FrameReaderError::RawDataError(_)) => error!("{e}"),
-            Err(FrameReaderError::IOError(e)) => match e.kind() {
-                io::ErrorKind::InvalidData => error!("{e}"),
-                io::ErrorKind::TimedOut => error!("{e}"),
-                _ => {
-                    error!("{e}");
-                    panic!("{e:?}")
-                }
-            },
-        }
-
         match command_rx.try_recv() {
             Ok(Commands::STOP) => return,
             Err(TryRecvError::Empty) => (),
@@ -60,6 +42,26 @@ fn reader(port: Box<dyn SerialPort>, frame_tx: Sender<Frame>, command_rx: Receiv
                 error!("Main thread dissapeared");
                 panic!("{e:?}")
             }
+        }
+
+        let msg = reader.next_frame();
+        match msg {
+            Ok(_) => () ,
+            Err(ref e) => match e.kind() {
+                io::ErrorKind::InvalidData => (),
+                io::ErrorKind::TimedOut => (),
+                _ => {error = true;},
+            } ,
+        }
+        match frame_tx.send(msg) {
+            Ok(_) => (),
+            Err(e) => {
+                error!("Main Thread has dropped the reciever");
+                panic!("{e:?}")
+            }
+        }
+        if error {
+            return;
         }
     }
 }
@@ -91,32 +93,63 @@ impl MyApp {
 
     /// reads data from the mpsc
     ///
-    /// **returns** true when data was recived
-    fn recive_data(&mut self) -> bool {
-        if let Some(ref ch) = self.reader_comm {
-            loop {
-                match ch.0.try_recv() {
-                    Ok(f) => {
-                        let v = self
-                            .data
-                            .entry(f.sensor_id)
-                            .or_default()
-                            .entry(f.board_id)
-                            .or_default();
-                        v.push([f.timestamp as f64, f.value as f64]);
-                    }
-                    Err(TryRecvError::Disconnected) => {
-                        self.reader_comm = None;
-                        self.err = Some("Reader Disconected".into());
-                        return false;
-                    }
-                    Err(TryRecvError::Empty) => {
-                        return true;
-                    }
+    /// **returns** the duration after which to redraw
+    fn recive_data(&mut self) -> Option<Duration> {
+        let ch = self.reader_comm.as_ref()?;
+
+        loop {
+            match ch.0.try_recv() {
+                Ok(Ok(f)) => {
+                    let v = self
+                        .data
+                        .entry(f.sensor_id)
+                        .or_default()
+                        .entry(f.board_id)
+                        .or_default();
+                    v.push([f.timestamp as f64, f.value as f64]);
+                }
+
+                Ok(Err(e)) => return self.handle_reader_error(e),
+
+                Err(TryRecvError::Disconnected) => {
+                    self.reader_comm = None;
+                    self.err = Some("Reader Disconected".into());
+                    error!("Reader Disconnected");
+                    return None;
+                }
+
+                Err(TryRecvError::Empty) => {
+                    // this is expected. we process frames faster than they arrive
+                    return Some(Duration::from_millis(50));
                 }
             }
         }
-        false
+    }
+
+    fn handle_reader_error(&mut self, e: io::Error) -> Option<Duration> {
+        use io::ErrorKind::*;
+        match e.kind() {
+            InvalidData => {
+                self.err = Some(format!("{e}"));
+                error!("{e:?}");
+                // this usually happens when the reading thread just started up,
+                // and got the very first (clipped) line. We just try again!
+                Some(Duration::from_millis(50))
+            }
+            TimedOut => {
+                self.err = Some(format!("{e}"));
+                error!("{e:?}");
+                // no need to redraw, but keep listening
+                Some(Duration::from_secs(1))
+            }
+            _ => {
+                self.err = Some(format!("Reader encounterd an error: {e}"));
+                error!("{e:?}");
+                let (_, reader_tx) = self.reader_comm.as_ref().unwrap_or_else(|| unreachable!());
+                let _ = reader_tx.send(Commands::STOP);
+                None
+            }
+        }
     }
 
     fn show_sidebar(&mut self, ui: &mut Ui) {
@@ -190,7 +223,7 @@ impl MyApp {
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if self.recive_data() {
+        if self.recive_data().is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
 

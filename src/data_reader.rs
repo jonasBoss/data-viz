@@ -1,10 +1,8 @@
 use std::io::{self, BufRead, BufReader};
 
 use lazy_static::lazy_static;
-use log::error;
 use regex::Regex;
 use serialport::SerialPort;
-use thiserror::Error;
 
 #[derive(Debug)]
 pub struct Frame {
@@ -12,14 +10,6 @@ pub struct Frame {
     pub sensor_id: u8,
     pub value: u16,
     pub timestamp: u32,
-}
-
-#[derive(Debug, Error)]
-pub enum FrameReaderError {
-    #[error("unable to parse into Frame: `{0}`")]
-    RawDataError(String),
-    #[error("{0}")]
-    IOError(io::Error),
 }
 
 #[derive(Debug)]
@@ -36,10 +26,8 @@ impl FrameReader {
         }
     }
 
-    pub fn next_frame(&mut self) -> Result<Frame, FrameReaderError> {
-        self.port
-            .read_line(&mut self.buf)
-            .map_err(FrameReaderError::IOError)?;
+    pub fn next_frame(&mut self) -> io::Result<Frame> {
+        self.port.read_line(&mut self.buf)?;
         let res = self.buf.as_str().try_into();
         self.buf.clear();
         res
@@ -47,7 +35,7 @@ impl FrameReader {
 }
 
 impl TryFrom<&str> for Frame {
-    type Error = FrameReaderError;
+    type Error = io::Error;
 
     fn try_from(slice: &str) -> Result<Self, Self::Error> {
         lazy_static! {
@@ -66,7 +54,7 @@ impl TryFrom<&str> for Frame {
                 timestamp,
             })
         } else {
-            Err(FrameReaderError::RawDataError(slice.to_owned()))
+            Err(io::Error::new(io::ErrorKind::InvalidData, slice.to_owned()))
         }
     }
 }
