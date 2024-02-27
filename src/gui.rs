@@ -1,5 +1,9 @@
 use std::{
-    collections::HashMap, io::{self, BufReader}, sync::mpsc::{self, Receiver, Sender, TryRecvError}, thread, time::Duration
+    collections::{HashMap, HashSet},
+    io::{self, BufReader},
+    sync::mpsc::{self, Receiver, Sender, TryRecvError},
+    thread,
+    time::Duration,
 };
 
 use eframe::egui::{self, Ui, Widget};
@@ -18,10 +22,13 @@ pub struct MyApp {
     path: String,
     baud: u32,
     err: Option<String>,
-    sensor_id: u8,
+
+    sensors: HashSet<u8>,
+    boards: HashSet<u8>,
+
     reader_comm: Option<(Receiver<io::Result<Frame>>, Sender<Commands>)>,
-    /// {sensor_id -> {board_id -> data}}
-    data: HashMap<u8, HashMap<u8, Vec<[f64; 2]>>>,
+    /// {(board_id, sensor_id) ->  data}
+    data: HashMap<(u8, u8), Vec<[f64; 2]>>,
 }
 
 /// reader main function. Reads frames from the serial port and sends them into `frame_tx`
@@ -46,12 +53,14 @@ fn reader(
 
         let msg = reader.next_frame();
         match msg {
-            Ok(_) => () ,
+            Ok(_) => (),
             Err(ref e) => match e.kind() {
                 io::ErrorKind::InvalidData => (),
                 io::ErrorKind::TimedOut => (),
-                _ => {error = true;},
-            } ,
+                _ => {
+                    error = true;
+                }
+            },
         }
         match frame_tx.send(msg) {
             Ok(_) => (),
@@ -70,11 +79,12 @@ impl MyApp {
     pub fn new(_cc: &eframe::CreationContext) -> Self {
         Self {
             path: "/dev/ttyUSB0".to_owned(),
-            baud: 115200,
+            baud: 921_600,
             err: None,
-            sensor_id: 1,
             reader_comm: None,
             data: Default::default(),
+            sensors: Default::default(),
+            boards: Default::default(),
         }
     }
 
@@ -100,13 +110,10 @@ impl MyApp {
         loop {
             match ch.0.try_recv() {
                 Ok(Ok(f)) => {
-                    let v = self
-                        .data
-                        .entry(f.sensor_id)
+                    self.data
+                        .entry((f.board_id, f.sensor_id))
                         .or_default()
-                        .entry(f.board_id)
-                        .or_default();
-                    v.push([f.timestamp as f64, f.value as f64]);
+                        .push([f.timestamp as f64, f.value as f64]);
                 }
 
                 Ok(Err(e)) => return self.handle_reader_error(e),
@@ -196,28 +203,43 @@ impl MyApp {
                 self.data.clear()
             }
         });
-        for id in self.data.keys().sorted() {
-            let mut selected = id == &self.sensor_id;
-            ui.toggle_value(&mut selected, format!("Show Sensor {id}"));
+
+        ui.label("Boards:");
+        for board_id in self.data.keys().map(|(b,_)|b).sorted().dedup() {
+            let mut selected = self.boards.contains(board_id);
+            ui.toggle_value(&mut selected, format!("Show Board {board_id}"));
             if selected {
-                self.sensor_id = *id;
+                self.boards.insert(*board_id);
+            } else {
+                self.boards.remove(board_id);
+            }
+        }
+        ui.label("Sensors:");
+        for sensor_id in self.data.keys().map(|(_,s)|s).sorted().dedup() {
+            let mut selected = self.sensors.contains(sensor_id);
+            ui.toggle_value(&mut selected, format!("Show Sensor {sensor_id}"));
+            if selected {
+                self.sensors.insert(*sensor_id);
+            } else {
+                self.sensors.remove(sensor_id);
             }
         }
     }
 
     fn show_plot(&mut self, ui: &mut Ui) {
-        ui.heading(format!("Sensor: {}", self.sensor_id));
-        if let Some(data) = self.data.get(&self.sensor_id) {
-            let plot = Plot::new("sensor_plt").legend(Legend::default());
-            plot.show(ui, |plt_ui| {
-                for (board_id, data) in data.iter() {
-                    plt_ui.line(
-                        Line::new(PlotPoints::from(data.clone()))
-                            .name(format!("Board id: {board_id}")),
-                    );
-                }
-            });
-        }
+        let plot = Plot::new("sensor_plt").legend(Legend::default());
+        plot.show(ui, |plt_ui| {
+            for ((board_id, sensor_id), data) in self
+                .data
+                .iter()
+                .filter(|((b, s), _)| self.boards.contains(b) && self.sensors.contains(s))
+            {
+                plt_ui.line(
+                    Line::new(PlotPoints::from(data.clone()))
+                        .name(format!("Senosr: {sensor_id} Board: {board_id}")),
+                );
+            }
+        });
     }
 }
 
