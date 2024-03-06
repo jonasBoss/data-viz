@@ -21,13 +21,20 @@ pub struct MyApp {
     boards: HashSet<u8>,
 
     reader: Reader,
-    file_dialog: FileDialog,
+    save_dialog: FileDialog,
+    log_dialog: FileDialog,
 }
 
 impl MyApp {
     pub fn new(_cc: &eframe::CreationContext) -> Self {
-        let file_dialog = FileDialog::save_file(home_dir())
+        let save_dialog = FileDialog::save_file(home_dir())
             .default_filename("sensor_data.csv")
+            .filename_filter(Box::new(|s: &str| s.ends_with(".csv")))
+            .show_files_filter(Box::new(|s: &Path| {
+                s.extension().is_some_and(|ext| ext == "csv")
+            }));
+        let log_dialog = FileDialog::save_file(home_dir())
+            .default_filename("sensor_log.csv")
             .filename_filter(Box::new(|s: &str| s.ends_with(".csv")))
             .show_files_filter(Box::new(|s: &Path| {
                 s.extension().is_some_and(|ext| ext == "csv")
@@ -39,7 +46,8 @@ impl MyApp {
             reader: Default::default(),
             sensors: Default::default(),
             boards: Default::default(),
-            file_dialog,
+            save_dialog,
+            log_dialog,
         }
     }
 
@@ -84,13 +92,22 @@ impl MyApp {
                 self.reader.data.clear()
             }
             ui.end_row();
+            ui.end_row();
 
             ui.label("Save to CSV:");
             if egui::Button::new("Save").min_size(size).ui(ui).clicked() {
-                self.file_dialog.open();
+                self.save_dialog.open();
             }
+            ui.end_row();
+
+            ui.label("Log Data Live:");
+            if egui::Button::new("Start Logger").min_size(size).ui(ui).clicked() {
+                self.log_dialog.open();
+            }
+
         });
 
+        ui.separator();
         ui.label("Boards:");
         for board_id in self.reader.data.keys().map(|(b, _)| b).sorted().dedup() {
             let mut selected = self.boards.contains(board_id);
@@ -162,10 +179,16 @@ impl eframe::App for MyApp {
             ui.label(self.reader.reader_status());
         });
 
-        self.file_dialog.show(ctx);
-        if self.file_dialog.selected() {
-            if let Some(path) = self.file_dialog.path() {
+        self.save_dialog.show(ctx);
+        if self.save_dialog.selected() {
+            if let Some(path) = self.save_dialog.path() {
                 self.save_data(path).unwrap();
+            }
+        }
+        self.log_dialog.show(ctx);
+        if self.log_dialog.selected() {
+            if let Some(path) = self.log_dialog.path() {
+                todo!()
             }
         }
     }
