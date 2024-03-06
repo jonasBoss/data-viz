@@ -1,12 +1,14 @@
 use std::{
     collections::HashMap,
+    fs::File,
     io::{self, BufRead, BufReader},
     path::Path,
     sync::mpsc::{self, TryRecvError},
     thread,
-    time::Duration,
+    time::{self, Duration, Instant},
 };
 
+use csv::Writer;
 use lazy_static::lazy_static;
 use log::error;
 use regex::Regex;
@@ -14,6 +16,7 @@ use serialport::SerialPort;
 
 enum Commands {
     Stop,
+    StopLogger,
     StartLogging(Box<Path>),
 }
 
@@ -35,8 +38,9 @@ pub struct Reader {
 
 #[derive(Debug)]
 enum ReaderStatus {
-    Err(String),
+    LogErr(String),
     Running,
+    Logging,
     Stopped(Option<String>),
 }
 
@@ -91,17 +95,22 @@ impl Reader {
                 self.status = ReaderStatus::Running;
                 ret
             }
+            Ok(ReaderStatus::Logging) => {
+                self.status = ReaderStatus::Logging;
+                ret
+            }
             Ok(s @ ReaderStatus::Stopped(_)) => {
                 self.status = s;
                 self.comm = None;
                 None
             }
-            Ok(s @ ReaderStatus::Err(_)) => {
+            Ok(s @ ReaderStatus::LogErr(_)) => {
                 self.status = s;
                 ret
             }
             Err(TryRecvError::Disconnected) => {
-                self.status = ReaderStatus::Stopped(Some("Reader Disconnected unexpectedly".into()));
+                self.status =
+                    ReaderStatus::Stopped(Some("Reader Disconnected unexpectedly".into()));
                 self.comm = None;
                 None
             }
@@ -129,19 +138,22 @@ impl Reader {
         !matches!(self.status, ReaderStatus::Stopped(_))
     }
 
-    pub fn start_logging(&mut self, path: Box<Path>){
-        let Some(ref mut r) = self.comm else {return;};
+    pub fn start_logging(&mut self, path: Box<Path>) {
+        let Some(ref mut r) = self.comm else {
+            return;
+        };
         let _ = r.command_tx.send(Commands::StartLogging(path));
     }
 
-    pub fn logging(&self)->bool {
-        todo!()
+    pub fn logging(&self) -> bool {
+        matches!(self.status, ReaderStatus::Logging)
     }
 
     pub fn reader_status(&self) -> String {
         match self.status {
-            ReaderStatus::Err(ref e) => e.to_owned(),
+            ReaderStatus::LogErr(ref e) => e.to_owned(),
             ReaderStatus::Running => "Running".to_owned(),
+            ReaderStatus::Logging => "Logging".to_owned(),
             ReaderStatus::Stopped(Some(ref reason)) => format!("Stopped ({reason})"),
             ReaderStatus::Stopped(_) => "Stopped".to_owned(),
         }
@@ -174,19 +186,59 @@ impl Reader {
         let reader = BufReader::new(port);
         let mut reader = FrameReader::new(reader);
         let mut err_retry = 0u8;
+        let mut logger: Option<Writer<File>> = None;
+        let start = Instant::now();
         status_tx
             .send(ReaderStatus::Running)
             .expect("Main Thread dropped status reciver");
         loop {
             match command_rx.try_recv() {
                 Ok(Commands::Stop) => {
+                    if let Some(ref mut wtr) = logger {
+                        let _ = wtr.flush();
+                    }
                     status_tx
                         .send(ReaderStatus::Stopped(None))
                         .expect("Main Thread dropped status reciver");
                     return;
                 }
-                Ok(Commands::StartLogging(_path)) => {
-                    todo!()
+                Ok(Commands::StopLogger) => {
+                    let Some(ref mut wtr) = logger else {
+                        continue;
+                    };
+                    if let Err(e) = wtr.flush() {
+                        status_tx
+                            .send(ReaderStatus::LogErr(e.to_string()))
+                            .expect("Main Thread dropped status reciver");
+                    } else {
+                        status_tx
+                            .send(ReaderStatus::Running)
+                            .expect("Main Thread dropped status reciver");
+                    }
+                }
+                Ok(Commands::StartLogging(path)) => {
+                    if logger.is_some() {
+                        continue;
+                    }
+                    let Ok(mut wtr) = csv::Writer::from_path(path).inspect_err(|e| {
+                        status_tx
+                            .send(ReaderStatus::LogErr(e.to_string()))
+                            .expect("Main Thread dropped status reciver")
+                    }) else {
+                        continue;
+                    };
+                    if let Err(e) =
+                        wtr.write_record(["Sensor id", "Board id", "Read Time", "Time", "Value"])
+                    {
+                        status_tx
+                            .send(ReaderStatus::LogErr(e.to_string()))
+                            .expect("Main Thread dropped status reciver");
+                        continue;
+                    };
+                    logger = Some(wtr);
+                    status_tx
+                        .send(ReaderStatus::Logging)
+                        .expect("Main Thread dropped status reciver");
                 }
                 Err(mpsc::TryRecvError::Empty) => (),
                 Err(mpsc::TryRecvError::Disconnected) => {
@@ -197,6 +249,22 @@ impl Reader {
             match reader.next_frame() {
                 Ok(f) => {
                     err_retry = 0;
+                    if let Some(ref mut wtr) = logger {
+                        let now = start.elapsed().as_millis();
+                        let slice = [
+                            f.sensor_id.to_string(),
+                            f.board_id.to_string(),
+                            now.to_string(),
+                            f.timestamp.to_string(),
+                            f.value.to_string(),
+                        ];
+                        if let Err(e) = wtr.write_record(slice) {
+                            status_tx
+                                .send(ReaderStatus::LogErr(e.to_string()))
+                                .expect("Main Thread dropped status reciver");
+                            logger = None;
+                        }
+                    }
                     frame_tx.send(f).expect("Main Thread dropped frame reciver");
                 }
                 Err(e) => {
