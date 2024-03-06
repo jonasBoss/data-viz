@@ -37,7 +37,7 @@ pub struct Reader {
 enum ReaderStatus {
     Err(String),
     Running,
-    Stopped(String),
+    Stopped(Option<String>),
 }
 
 #[derive(Debug)]
@@ -55,7 +55,7 @@ struct FrameReader {
 
 impl Default for ReaderStatus {
     fn default() -> Self {
-        ReaderStatus::Stopped("".to_owned())
+        ReaderStatus::Stopped(None)
     }
 }
 
@@ -133,7 +133,8 @@ impl Reader {
         match self.status {
             ReaderStatus::Err(ref e) => e.to_owned(),
             ReaderStatus::Running => "Running".to_owned(),
-            ReaderStatus::Stopped(ref reason) => format!("Stopped ({reason})"),
+            ReaderStatus::Stopped(Some(ref reason)) => format!("Stopped ({reason})"),
+            ReaderStatus::Stopped(_) => "Stopped".to_owned(),
         }
     }
 
@@ -171,11 +172,11 @@ impl Reader {
             match command_rx.try_recv() {
                 Ok(Commands::Stop) => {
                     status_tx
-                        .send(ReaderStatus::Stopped("".to_owned()))
+                        .send(ReaderStatus::Stopped(None))
                         .expect("Main Thread dropped status reciver");
                     return;
                 }
-                Ok(Commands::Log(path)) => {
+                Ok(Commands::Log(_path)) => {
                     todo!()
                 }
                 Err(mpsc::TryRecvError::Empty) => (),
@@ -194,7 +195,7 @@ impl Reader {
                     error!("{e:?}");
                     if err_retry > 3 {
                         status_tx
-                            .send(ReaderStatus::Stopped(e.to_string()))
+                            .send(ReaderStatus::Stopped(Some(e.to_string())))
                             .expect("Main Thread dropped status reciver");
                         panic!("Too many read errors")
                     }
