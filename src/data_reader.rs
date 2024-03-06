@@ -82,7 +82,7 @@ impl Reader {
         match e {
             TryRecvError::Empty => ret = Some(Duration::from_millis(100)),
             TryRecvError::Disconnected => {
-                self.status = ReaderStatus::Err("Reader Disconnected unexpectedly".into())
+                self.status = ReaderStatus::Stopped(Some("Reader Disconnected unexpectedly".into()))
             }
         };
 
@@ -101,7 +101,7 @@ impl Reader {
                 ret
             }
             Err(TryRecvError::Disconnected) => {
-                self.status = ReaderStatus::Err("Reader Disconnected unexpectedly".into());
+                self.status = ReaderStatus::Stopped(Some("Reader Disconnected unexpectedly".into()));
                 self.comm = None;
                 None
             }
@@ -113,7 +113,7 @@ impl Reader {
         if self.comm.is_none() {
             match Self::spawn_reader(path, baud) {
                 Ok(r) => self.comm = Some(r),
-                Err(e) => self.status = ReaderStatus::Err(format!("{e}")),
+                Err(e) => self.status = ReaderStatus::Stopped(Some(e.to_string())),
             }
         }
     }
@@ -126,7 +126,7 @@ impl Reader {
     }
 
     pub fn running(&self) -> bool {
-        matches!(self.status, ReaderStatus::Running)
+        !matches!(self.status, ReaderStatus::Stopped(_))
     }
 
     pub fn reader_status(&self) -> String {
