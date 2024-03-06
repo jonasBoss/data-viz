@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     io::{self, BufRead, BufReader},
+    path::Path,
     sync::mpsc::{self, TryRecvError},
     thread,
     time::Duration,
@@ -13,6 +14,7 @@ use serialport::SerialPort;
 
 enum Commands {
     Stop,
+    Log(Box<Path>),
 }
 
 #[derive(Debug)]
@@ -31,12 +33,11 @@ pub struct Reader {
     pub data: HashMap<(u8, u8), Vec<[f64; 2]>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 enum ReaderStatus {
     Err(String),
     Running,
-    #[default]
-    Stopped,
+    Stopped(String),
 }
 
 #[derive(Debug)]
@@ -50,6 +51,12 @@ struct ReaderComm {
 struct FrameReader {
     port: BufReader<Box<dyn SerialPort>>,
     buf: String,
+}
+
+impl Default for ReaderStatus {
+    fn default() -> Self {
+        ReaderStatus::Stopped("".to_owned())
+    }
 }
 
 impl Reader {
@@ -84,10 +91,14 @@ impl Reader {
                 self.status = ReaderStatus::Running;
                 ret
             }
-            Ok(s) => {
+            Ok(s @ ReaderStatus::Stopped(_)) => {
                 self.status = s;
                 self.comm = None;
                 None
+            }
+            Ok(s @ ReaderStatus::Err(_)) => {
+                self.status = s;
+                ret
             }
             Err(TryRecvError::Disconnected) => {
                 self.status = ReaderStatus::Err("Reader Disconnected unexpectedly".into());
@@ -122,7 +133,7 @@ impl Reader {
         match self.status {
             ReaderStatus::Err(ref e) => e.to_owned(),
             ReaderStatus::Running => "Running".to_owned(),
-            ReaderStatus::Stopped => "Stopped".to_owned(),
+            ReaderStatus::Stopped(ref reason) => format!("Stopped ({reason})"),
         }
     }
 
@@ -160,9 +171,12 @@ impl Reader {
             match command_rx.try_recv() {
                 Ok(Commands::Stop) => {
                     status_tx
-                        .send(ReaderStatus::Stopped)
+                        .send(ReaderStatus::Stopped("".to_owned()))
                         .expect("Main Thread dropped status reciver");
                     return;
+                }
+                Ok(Commands::Log(path)) => {
+                    todo!()
                 }
                 Err(mpsc::TryRecvError::Empty) => (),
                 Err(mpsc::TryRecvError::Disconnected) => {
@@ -180,7 +194,7 @@ impl Reader {
                     error!("{e:?}");
                     if err_retry > 3 {
                         status_tx
-                            .send(ReaderStatus::Err(e.to_string()))
+                            .send(ReaderStatus::Stopped(e.to_string()))
                             .expect("Main Thread dropped status reciver");
                         panic!("Too many read errors")
                     }
