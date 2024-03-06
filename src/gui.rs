@@ -1,15 +1,13 @@
 use std::{
-    collections::{HashMap, HashSet},
-    io::{self, BufReader},
-    sync::mpsc::{self, Receiver, Sender, TryRecvError},
-    thread,
-    time::Duration,
+    collections::{HashMap, HashSet}, io::{self, BufReader}, path::{Path, PathBuf}, sync::mpsc::{self, Receiver, Sender, TryRecvError}, thread, time::Duration
 };
 
+use dirs::home_dir;
 use eframe::egui::{self, Ui, Widget};
+use egui_file::FileDialog;
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 use itertools::Itertools;
-use log::error;
+use log::{error, info};
 use serialport::SerialPort;
 
 use crate::data_reader::{Frame, FrameReader};
@@ -29,6 +27,7 @@ pub struct MyApp {
     reader_comm: Option<(Receiver<io::Result<Frame>>, Sender<Commands>)>,
     /// {(board_id, sensor_id) ->  data}
     data: HashMap<(u8, u8), Vec<[f64; 2]>>,
+    file_dialog: FileDialog,
 }
 
 /// reader main function. Reads frames from the serial port and sends them into `frame_tx`
@@ -43,7 +42,7 @@ fn reader(
     let mut error = false;
     loop {
         match command_rx.try_recv() {
-            Ok(Commands::STOP) => return,
+            Ok(Commands::STOP) => break,
             Err(TryRecvError::Empty) => (),
             Err(e @ TryRecvError::Disconnected) => {
                 error!("Main thread dissapeared");
@@ -70,13 +69,18 @@ fn reader(
             }
         }
         if error {
-            return;
+            break;
         }
     }
 }
 
 impl MyApp {
     pub fn new(_cc: &eframe::CreationContext) -> Self {
+        let file_dialog = FileDialog::save_file(home_dir())
+            .default_filename("sensor_data.csv")
+            .filename_filter(Box::new(|s:&str| s.ends_with(".csv")))
+            .show_files_filter(Box::new(|s:&Path| s.ends_with(".csv")));
+
         Self {
             path: "/dev/ttyUSB0".to_owned(),
             baud: 921_600,
@@ -85,6 +89,7 @@ impl MyApp {
             data: Default::default(),
             sensors: Default::default(),
             boards: Default::default(),
+            file_dialog,
         }
     }
 
@@ -174,7 +179,6 @@ impl MyApp {
             ui.end_row();
 
             ui.label("");
-
             if let Some((_, ref sender)) = self.reader_comm {
                 if egui::Button::new("Stop reading")
                     .min_size(size)
@@ -192,8 +196,8 @@ impl MyApp {
                     self.err = Some(format!("{e}"));
                 }
             }
-
             ui.end_row();
+
             ui.label("");
             if egui::Button::new("Clear Data")
                 .min_size(size)
@@ -202,10 +206,16 @@ impl MyApp {
             {
                 self.data.clear()
             }
+            ui.end_row();
+
+            ui.label("Save to CSV:");
+            if egui::Button::new("Save").min_size(size).ui(ui).clicked() {
+                self.file_dialog.open();
+            }
         });
 
         ui.label("Boards:");
-        for board_id in self.data.keys().map(|(b,_)|b).sorted().dedup() {
+        for board_id in self.data.keys().map(|(b, _)| b).sorted().dedup() {
             let mut selected = self.boards.contains(board_id);
             ui.toggle_value(&mut selected, format!("Show Board {board_id}"));
             if selected {
@@ -215,7 +225,7 @@ impl MyApp {
             }
         }
         ui.label("Sensors:");
-        for sensor_id in self.data.keys().map(|(_,s)|s).sorted().dedup() {
+        for sensor_id in self.data.keys().map(|(_, s)| s).sorted().dedup() {
             let mut selected = self.sensors.contains(sensor_id);
             ui.toggle_value(&mut selected, format!("Show Sensor {sensor_id}"));
             if selected {
@@ -241,6 +251,19 @@ impl MyApp {
             }
         });
     }
+
+    fn save_data(&self, path:&Path) -> Result<(), io::Error> {
+        info!("saving to {path:?}");
+        let mut wtr = csv::Writer::from_path(path)?;
+        wtr.write_record(&["Sensor id", "Board id", "Time", "Value"])?;
+        for slice in self.data.keys().flat_map(|(b, s)| {
+            let values = self.data.get(&(*b, *s)).unwrap_or_else(||unreachable!());
+            values.iter().map(|[t,v]| [s.to_string(), b.to_string(), t.to_string(), v.to_string()])
+        }){
+            wtr.write_record(&slice)?;
+        }
+        wtr.flush()
+    }
 }
 
 impl eframe::App for MyApp {
@@ -254,5 +277,12 @@ impl eframe::App for MyApp {
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
             self.err.as_ref().map(|err| ui.label(err));
         });
+
+        self.file_dialog.show(ctx);
+        if self.file_dialog.selected(){
+            if let Some(path) =  self.file_dialog.path(){
+                self.save_data(path).unwrap();
+            }
+        }
     }
 }
