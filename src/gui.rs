@@ -188,7 +188,7 @@ impl eframe::App for MyApp {
         self.log_dialog.show(ctx);
         if self.log_dialog.selected() {
             if let Some(path) = self.log_dialog.path() {
-                todo!()
+                self.reader.start_logging(path.into());
             }
         }
     }

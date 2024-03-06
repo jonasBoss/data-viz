@@ -14,7 +14,7 @@ use serialport::SerialPort;
 
 enum Commands {
     Stop,
-    Log(Box<Path>),
+    StartLogging(Box<Path>),
 }
 
 #[derive(Debug)]
@@ -129,6 +129,15 @@ impl Reader {
         !matches!(self.status, ReaderStatus::Stopped(_))
     }
 
+    pub fn start_logging(&mut self, path: Box<Path>){
+        let Some(ref mut r) = self.comm else {return;};
+        let _ = r.command_tx.send(Commands::StartLogging(path));
+    }
+
+    pub fn logging(&self)->bool {
+        todo!()
+    }
+
     pub fn reader_status(&self) -> String {
         match self.status {
             ReaderStatus::Err(ref e) => e.to_owned(),
@@ -176,7 +185,7 @@ impl Reader {
                         .expect("Main Thread dropped status reciver");
                     return;
                 }
-                Ok(Commands::Log(_path)) => {
+                Ok(Commands::StartLogging(_path)) => {
                     todo!()
                 }
                 Err(mpsc::TryRecvError::Empty) => (),
