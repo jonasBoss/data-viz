@@ -101,10 +101,22 @@ impl MyApp {
             ui.end_row();
 
             ui.label("Log Data Live:");
-            if egui::Button::new("Start Logger").min_size(size).ui(ui).clicked() {
+
+            if self.reader.logging() {
+                if egui::Button::new("Stop Logger")
+                    .min_size(size)
+                    .ui(ui)
+                    .clicked()
+                {
+                    self.reader.stop_logging();
+                }
+            } else if egui::Button::new("Start Logger")
+                .min_size(size)
+                .ui(ui)
+                .clicked()
+            {
                 self.log_dialog.open();
             }
-
         });
 
         ui.separator();

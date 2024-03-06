@@ -5,7 +5,7 @@ use std::{
     path::Path,
     sync::mpsc::{self, TryRecvError},
     thread,
-    time::{self, Duration, Instant},
+    time::{Duration, Instant},
 };
 
 use csv::Writer;
@@ -145,6 +145,13 @@ impl Reader {
         let _ = r.command_tx.send(Commands::StartLogging(path));
     }
 
+    pub fn stop_logging(&mut self) {
+        let Some(ref mut r) = self.comm else {
+            return;
+        };
+        let _ = r.command_tx.send(Commands::StopLogger);
+    }
+
     pub fn logging(&self) -> bool {
         matches!(self.status, ReaderStatus::Logging)
     }
@@ -215,6 +222,7 @@ impl Reader {
                             .send(ReaderStatus::Running)
                             .expect("Main Thread dropped status reciver");
                     }
+                    logger = None;
                 }
                 Ok(Commands::StartLogging(path)) => {
                     if logger.is_some() {
