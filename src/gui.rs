@@ -62,7 +62,8 @@ impl MyApp {
             ui.end_row();
 
             ui.label("Baudrate:");
-            ui.label(format!("{}", self.baud));
+            egui::Slider::new(&mut self.baud, 9600..=921_600).ui(ui);
+            //ui.label(format!("{}", self.baud));
             ui.end_row();
 
             ui.label("");
