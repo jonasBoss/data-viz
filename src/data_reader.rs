@@ -1,25 +1,20 @@
-use core::slice;
 use std::{
     collections::HashMap,
     fs::File,
     io::{self, BufRead, BufReader},
-    path::Path,
     sync::mpsc::{self, TryRecvError},
     thread,
     time::{Duration, Instant},
 };
 
 use csv::Writer;
-use itertools::Itertools;
-use lazy_static::lazy_static;
+
 use log::error;
-use regex::Regex;
+
 use serialport::SerialPort;
 
 enum Commands {
     Stop,
-    StopLogger,
-    StartLogging(Box<Path>),
 }
 
 #[derive(Debug)]
@@ -40,9 +35,7 @@ pub struct Reader {
 
 #[derive(Debug)]
 enum ReaderStatus {
-    LogErr(String),
     Running,
-    Logging,
     Stopped(Option<String>),
 }
 
@@ -76,19 +69,22 @@ impl Reader {
 
         let e = loop {
             match r.frame_rx.try_recv() {
-                Ok(SerialData::Labels(s))=>{
+                Ok(SerialData::Labels(s)) => {
                     self.labels = s;
                     self.data.clear();
-                },
-                Ok(SerialData::Values(v))=>{
+                }
+                Ok(SerialData::Values(v)) => {
                     let time = v[0] as f64;
-                    for (label, value) in self.labels.iter().zip(v.into_iter().skip(1)){
-                        self.data.entry(label.to_owned()).or_default().push([time, value as f64])
+                    for (label, value) in self.labels.iter().zip(v.into_iter().skip(1)) {
+                        self.data
+                            .entry(label.to_owned())
+                            .or_default()
+                            .push([time, value as f64])
                     }
-                },
+                }
                 Ok(SerialData::Other(s)) => {
                     println!("{s}");
-                },
+                }
                 Err(e) => break e,
             }
         };
@@ -105,18 +101,10 @@ impl Reader {
                 self.status = ReaderStatus::Running;
                 ret
             }
-            Ok(ReaderStatus::Logging) => {
-                self.status = ReaderStatus::Logging;
-                ret
-            }
             Ok(s @ ReaderStatus::Stopped(_)) => {
                 self.status = s;
                 self.comm = None;
                 None
-            }
-            Ok(s @ ReaderStatus::LogErr(_)) => {
-                self.status = s;
-                ret
             }
             Err(TryRecvError::Disconnected) => {
                 self.status =
@@ -126,10 +114,6 @@ impl Reader {
             }
             Err(TryRecvError::Empty) => ret,
         }
-    }
-
-    pub fn labels(&self)->&[String]{
-        self.labels.as_ref()
     }
 
     pub fn start_reading(&mut self, path: &str, baud: u32) {
@@ -152,29 +136,9 @@ impl Reader {
         !matches!(self.status, ReaderStatus::Stopped(_))
     }
 
-    pub fn start_logging(&mut self, path: Box<Path>) {
-        let Some(ref mut r) = self.comm else {
-            return;
-        };
-        let _ = r.command_tx.send(Commands::StartLogging(path));
-    }
-
-    pub fn stop_logging(&mut self) {
-        let Some(ref mut r) = self.comm else {
-            return;
-        };
-        let _ = r.command_tx.send(Commands::StopLogger);
-    }
-
-    pub fn logging(&self) -> bool {
-        matches!(self.status, ReaderStatus::Logging)
-    }
-
     pub fn reader_status(&self) -> String {
         match self.status {
-            ReaderStatus::LogErr(ref e) => e.to_owned(),
             ReaderStatus::Running => "Running".to_owned(),
-            ReaderStatus::Logging => "Logging".to_owned(),
             ReaderStatus::Stopped(Some(ref reason)) => format!("Stopped ({reason})"),
             ReaderStatus::Stopped(_) => "Stopped".to_owned(),
         }
@@ -208,12 +172,12 @@ impl Reader {
         let mut reader = FrameReader::new(reader);
         let mut err_retry = 0u8;
         let mut logger: Option<Writer<File>> = None;
-        let start = Instant::now();
+        let _start = Instant::now();
         status_tx
             .send(ReaderStatus::Running)
             .expect("Main Thread dropped status reciver");
         loop {
-            let mut waiting = true;
+            let waiting = true;
             match command_rx.try_recv() {
                 Ok(Commands::Stop) => {
                     if let Some(ref mut wtr) = logger {
@@ -224,45 +188,6 @@ impl Reader {
                         .expect("Main Thread dropped status reciver");
                     return;
                 }
-                Ok(Commands::StopLogger) => {
-                    let Some(ref mut wtr) = logger else {
-                        continue;
-                    };
-                    if let Err(e) = wtr.flush() {
-                        status_tx
-                            .send(ReaderStatus::LogErr(e.to_string()))
-                            .expect("Main Thread dropped status reciver");
-                    } else {
-                        status_tx
-                            .send(ReaderStatus::Running)
-                            .expect("Main Thread dropped status reciver");
-                    }
-                    logger = None;
-                }
-                Ok(Commands::StartLogging(path)) => {
-                    if logger.is_some() {
-                        continue;
-                    }
-                    let Ok(mut wtr) = csv::Writer::from_path(path).inspect_err(|e| {
-                        status_tx
-                            .send(ReaderStatus::LogErr(e.to_string()))
-                            .expect("Main Thread dropped status reciver")
-                    }) else {
-                        continue;
-                    };
-                    if let Err(e) =
-                        wtr.write_record(["Sensor id", "Board id", "Read Time", "Time", "Value"])
-                    {
-                        status_tx
-                            .send(ReaderStatus::LogErr(e.to_string()))
-                            .expect("Main Thread dropped status reciver");
-                        continue;
-                    };
-                    logger = Some(wtr);
-                    status_tx
-                        .send(ReaderStatus::Logging)
-                        .expect("Main Thread dropped status reciver");
-                }
                 Err(mpsc::TryRecvError::Empty) => (),
                 Err(mpsc::TryRecvError::Disconnected) => {
                     panic!("Main Thread dropped command sender")
@@ -272,29 +197,15 @@ impl Reader {
             match reader.next_frame() {
                 Ok(f) => {
                     err_retry = 0;
-                    // if let Some(ref mut wtr) = logger {
-                    //     let now = start.elapsed().as_millis();
-                    //     let slice = [
-                    //         f.sensor_id.to_string(),
-                    //         f.board_id.to_string(),
-                    //         now.to_string(),
-                    //         f.timestamp.to_string(),
-                    //         f.value.to_string(),
-                    //     ];
-                    //     if let Err(e) = wtr.write_record(slice) {
-                    //         status_tx
-                    //             .send(ReaderStatus::LogErr(e.to_string()))
-                    //             .expect("Main Thread dropped status reciver");
-                    //         logger = None;
-                    //     }
-                    // }
                     frame_tx.send(f).expect("Main Thread dropped frame reciver");
                 }
 
                 Err(e) => {
                     match e.kind() {
                         io::ErrorKind::TimedOut => {
-                            if waiting {continue;}
+                            if waiting {
+                                continue;
+                            }
                         }
                         _ => (),
                     }
@@ -328,30 +239,28 @@ impl FrameReader {
     }
 }
 
-
-impl SerialData{
+impl SerialData {
     fn try_from(slice: &str) -> Result<SerialData, io::Error> {
         dbg!(slice);
         let Some(slice) = slice.strip_suffix("\r\n") else {
             return Ok(Self::Other(slice.to_owned()));
         };
-        
-        if slice.starts_with("#L "){
+
+        if slice.starts_with("#L ") {
             println!("labels:");
             let slice = &slice[3..];
-            let this = Self::Labels(slice.split("; ").map(|s|s.to_owned()).collect());
+            let this = Self::Labels(slice.split("; ").map(|s| s.to_owned()).collect());
             return Ok(this);
         }
 
         let mut data: Vec<i32> = Vec::new();
-        for substr in slice.split(" ") {
-            let Ok(i) =  dbg!(substr).parse() else {
+        for substr in slice.split(' ') {
+            let Ok(i) = dbg!(substr).parse() else {
                 return Ok(Self::Other(slice.to_owned()));
             };
             data.push(i);
         }
-        
-        return Ok(Self::Values(data));
 
+        Ok(Self::Values(data))
     }
 }

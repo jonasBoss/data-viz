@@ -1,15 +1,8 @@
-use std::{
-    collections::HashSet,
-    io::{self},
-    path::Path,
-};
+use std::collections::HashSet;
 
-use dirs::home_dir;
 use eframe::egui::{self, Ui, Widget};
-use egui_file::FileDialog;
+
 use egui_plot::{Legend, Line, Plot, PlotPoints};
-use itertools::Itertools;
-use log::info;
 
 use crate::data_reader::Reader;
 
@@ -18,36 +11,16 @@ pub struct MyApp {
     baud: u32,
 
     labels: HashSet<String>,
-    // boards: HashSet<u8>,
-
     reader: Reader,
-    save_dialog: FileDialog,
-    log_dialog: FileDialog,
 }
 
 impl MyApp {
     pub fn new(_cc: &eframe::CreationContext) -> Self {
-        let save_dialog = FileDialog::save_file(home_dir())
-            .default_filename("sensor_data.csv")
-            .filename_filter(Box::new(|s: &str| s.ends_with(".csv")))
-            .show_files_filter(Box::new(|s: &Path| {
-                s.extension().is_some_and(|ext| ext == "csv")
-            }));
-        let log_dialog = FileDialog::save_file(home_dir())
-            .default_filename("sensor_log.csv")
-            .filename_filter(Box::new(|s: &str| s.ends_with(".csv")))
-            .show_files_filter(Box::new(|s: &Path| {
-                s.extension().is_some_and(|ext| ext == "csv")
-            }));
-
         Self {
             path: "/dev/ttyUSB0".to_owned(),
             baud: 38400,
             reader: Default::default(),
             labels: Default::default(),
-            // boards: Default::default(),
-            save_dialog,
-            log_dialog,
         }
     }
 
@@ -63,7 +36,6 @@ impl MyApp {
 
             ui.label("Baudrate:");
             egui::Slider::new(&mut self.baud, 9600..=921_600).ui(ui);
-            //ui.label(format!("{}", self.baud));
             ui.end_row();
 
             ui.label("");
@@ -93,54 +65,19 @@ impl MyApp {
                 self.reader.data.clear()
             }
             ui.end_row();
-            ui.end_row();
-
-            ui.label("Save to CSV:");
-            if egui::Button::new("Save").min_size(size).ui(ui).clicked() {
-                self.save_dialog.open();
-            }
-            ui.end_row();
-
-            ui.label("Log Data Live:");
-
-            if self.reader.logging() {
-                if egui::Button::new("Stop Logger")
-                    .min_size(size)
-                    .ui(ui)
-                    .clicked()
-                {
-                    self.reader.stop_logging();
-                }
-            } else if egui::Button::new("Start Logger")
-                .min_size(size)
-                .ui(ui)
-                .clicked()
-            {
-                self.log_dialog.open();
-            }
         });
 
         ui.separator();
         ui.label("Datenreihen:");
         for label in self.reader.data.keys() {
             let mut selected = self.labels.contains(label);
-            ui.toggle_value(&mut selected, format!("{label}"));
+            ui.toggle_value(&mut selected, label.to_string());
             if selected {
                 self.labels.insert(label.to_owned());
             } else {
                 self.labels.remove(label);
             }
         }
-        // ui.label("Sensors:");
-        // for sensor_id in self.reader.data.keys().map(|(_, s)| s).sorted().dedup() {
-        //     let mut selected = self.sensors.contains(sensor_id);
-        //     ui.toggle_value(&mut selected, format!("Show Sensor {sensor_id}"));
-        //     if selected {
-        //         self.sensors.insert(*sensor_id);
-        //     } else {
-        //         self.sensors.remove(sensor_id);
-        //     }
-        // }
     }
 
     fn show_plot(&mut self, ui: &mut Ui) {
@@ -150,34 +87,12 @@ impl MyApp {
                 .reader
                 .data
                 .iter()
-                .filter(|(l,_)| self.labels.contains(*l))
+                .filter(|(l, _)| self.labels.contains(*l))
             {
-                plt_ui.line(
-                    Line::new(PlotPoints::from(data.clone()))
-                        .name(format!("{label}")),
-                );
+                plt_ui.line(Line::new(PlotPoints::from(data.clone())).name(label.to_string()));
             }
         });
     }
-
-    // fn save_data(&self, path: &Path) -> Result<(), io::Error> {
-    //     info!("saving to {path:?}");
-    //     let mut wtr = csv::Writer::from_path(path)?;
-    //     wtr.write_record(["Sensor id", "Board id", "Time", "Value"])?;
-    //     for slice in self.reader.data.keys().flat_map(|(b, s)| {
-    //         let values = self
-    //             .reader
-    //             .data
-    //             .get(&(*b, *s))
-    //             .unwrap_or_else(|| unreachable!());
-    //         values
-    //             .iter()
-    //             .map(|[t, v]| [s.to_string(), b.to_string(), t.to_string(), v.to_string()])
-    //     }) {
-    //         wtr.write_record(&slice)?;
-    //     }
-    //     wtr.flush()
-    // }
 }
 
 impl eframe::App for MyApp {
@@ -191,18 +106,5 @@ impl eframe::App for MyApp {
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
             ui.label(self.reader.reader_status());
         });
-
-        self.save_dialog.show(ctx);
-        if self.save_dialog.selected() {
-            if let Some(path) = self.save_dialog.path() {
-                //self.save_data(path).unwrap();
-            }
-        }
-        self.log_dialog.show(ctx);
-        if self.log_dialog.selected() {
-            if let Some(path) = self.log_dialog.path() {
-                self.reader.start_logging(path.into());
-            }
-        }
     }
 }
