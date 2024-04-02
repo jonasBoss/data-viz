@@ -17,8 +17,8 @@ pub struct MyApp {
     path: String,
     baud: u32,
 
-    sensors: HashSet<u8>,
-    boards: HashSet<u8>,
+    labels: HashSet<String>,
+    // boards: HashSet<u8>,
 
     reader: Reader,
     save_dialog: FileDialog,
@@ -42,10 +42,10 @@ impl MyApp {
 
         Self {
             path: "/dev/ttyUSB0".to_owned(),
-            baud: 921_600,
+            baud: 38400,
             reader: Default::default(),
-            sensors: Default::default(),
-            boards: Default::default(),
+            labels: Default::default(),
+            // boards: Default::default(),
             save_dialog,
             log_dialog,
         }
@@ -121,63 +121,63 @@ impl MyApp {
         });
 
         ui.separator();
-        ui.label("Boards:");
-        for board_id in self.reader.data.keys().map(|(b, _)| b).sorted().dedup() {
-            let mut selected = self.boards.contains(board_id);
-            ui.toggle_value(&mut selected, format!("Show Board {board_id}"));
+        ui.label("Datenreihen:");
+        for label in self.reader.data.keys() {
+            let mut selected = self.labels.contains(label);
+            ui.toggle_value(&mut selected, format!("{label}"));
             if selected {
-                self.boards.insert(*board_id);
+                self.labels.insert(label.to_owned());
             } else {
-                self.boards.remove(board_id);
+                self.labels.remove(label);
             }
         }
-        ui.label("Sensors:");
-        for sensor_id in self.reader.data.keys().map(|(_, s)| s).sorted().dedup() {
-            let mut selected = self.sensors.contains(sensor_id);
-            ui.toggle_value(&mut selected, format!("Show Sensor {sensor_id}"));
-            if selected {
-                self.sensors.insert(*sensor_id);
-            } else {
-                self.sensors.remove(sensor_id);
-            }
-        }
+        // ui.label("Sensors:");
+        // for sensor_id in self.reader.data.keys().map(|(_, s)| s).sorted().dedup() {
+        //     let mut selected = self.sensors.contains(sensor_id);
+        //     ui.toggle_value(&mut selected, format!("Show Sensor {sensor_id}"));
+        //     if selected {
+        //         self.sensors.insert(*sensor_id);
+        //     } else {
+        //         self.sensors.remove(sensor_id);
+        //     }
+        // }
     }
 
     fn show_plot(&mut self, ui: &mut Ui) {
         let plot = Plot::new("sensor_plt").legend(Legend::default());
         plot.show(ui, |plt_ui| {
-            for ((board_id, sensor_id), data) in self
+            for (label, data) in self
                 .reader
                 .data
                 .iter()
-                .filter(|((b, s), _)| self.boards.contains(b) && self.sensors.contains(s))
+                .filter(|(l,_)| self.labels.contains(*l))
             {
                 plt_ui.line(
                     Line::new(PlotPoints::from(data.clone()))
-                        .name(format!("Senosr: {sensor_id} Board: {board_id}")),
+                        .name(format!("{label}")),
                 );
             }
         });
     }
 
-    fn save_data(&self, path: &Path) -> Result<(), io::Error> {
-        info!("saving to {path:?}");
-        let mut wtr = csv::Writer::from_path(path)?;
-        wtr.write_record(["Sensor id", "Board id", "Time", "Value"])?;
-        for slice in self.reader.data.keys().flat_map(|(b, s)| {
-            let values = self
-                .reader
-                .data
-                .get(&(*b, *s))
-                .unwrap_or_else(|| unreachable!());
-            values
-                .iter()
-                .map(|[t, v]| [s.to_string(), b.to_string(), t.to_string(), v.to_string()])
-        }) {
-            wtr.write_record(&slice)?;
-        }
-        wtr.flush()
-    }
+    // fn save_data(&self, path: &Path) -> Result<(), io::Error> {
+    //     info!("saving to {path:?}");
+    //     let mut wtr = csv::Writer::from_path(path)?;
+    //     wtr.write_record(["Sensor id", "Board id", "Time", "Value"])?;
+    //     for slice in self.reader.data.keys().flat_map(|(b, s)| {
+    //         let values = self
+    //             .reader
+    //             .data
+    //             .get(&(*b, *s))
+    //             .unwrap_or_else(|| unreachable!());
+    //         values
+    //             .iter()
+    //             .map(|[t, v]| [s.to_string(), b.to_string(), t.to_string(), v.to_string()])
+    //     }) {
+    //         wtr.write_record(&slice)?;
+    //     }
+    //     wtr.flush()
+    // }
 }
 
 impl eframe::App for MyApp {
@@ -195,7 +195,7 @@ impl eframe::App for MyApp {
         self.save_dialog.show(ctx);
         if self.save_dialog.selected() {
             if let Some(path) = self.save_dialog.path() {
-                self.save_data(path).unwrap();
+                //self.save_data(path).unwrap();
             }
         }
         self.log_dialog.show(ctx);

@@ -1,3 +1,4 @@
+use core::slice;
 use std::{
     collections::HashMap,
     fs::File,
@@ -9,6 +10,7 @@ use std::{
 };
 
 use csv::Writer;
+use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::error;
 use regex::Regex;
@@ -21,19 +23,19 @@ enum Commands {
 }
 
 #[derive(Debug)]
-struct Frame {
-    board_id: u8,
-    sensor_id: u8,
-    value: u16,
-    timestamp: u32,
+enum SerialData {
+    Labels(Vec<String>),
+    Values(Vec<i32>),
+    Other(String),
 }
 
 #[derive(Debug, Default)]
 pub struct Reader {
     comm: Option<ReaderComm>,
     status: ReaderStatus,
+    labels: Vec<String>,
     /// {(board_id, sensor_id) ->  data}
-    pub data: HashMap<(u8, u8), Vec<[f64; 2]>>,
+    pub data: HashMap<String, Vec<[f64; 2]>>,
 }
 
 #[derive(Debug)]
@@ -47,7 +49,7 @@ enum ReaderStatus {
 #[derive(Debug)]
 struct ReaderComm {
     command_tx: mpsc::Sender<Commands>,
-    frame_rx: mpsc::Receiver<Frame>,
+    frame_rx: mpsc::Receiver<SerialData>,
     status_rx: mpsc::Receiver<ReaderStatus>,
 }
 
@@ -74,11 +76,19 @@ impl Reader {
 
         let e = loop {
             match r.frame_rx.try_recv() {
-                Ok(f) => self
-                    .data
-                    .entry((f.board_id, f.sensor_id))
-                    .or_default()
-                    .push([f.timestamp as f64, f.value as f64]),
+                Ok(SerialData::Labels(s))=>{
+                    self.labels = s;
+                    self.data.clear();
+                },
+                Ok(SerialData::Values(v))=>{
+                    let time = v[0] as f64;
+                    for (label, value) in self.labels.iter().zip(v.into_iter().skip(1)){
+                        self.data.entry(label.to_owned()).or_default().push([time, value as f64])
+                    }
+                },
+                Ok(SerialData::Other(s)) => {
+                    println!("{s}");
+                },
                 Err(e) => break e,
             }
         };
@@ -116,6 +126,10 @@ impl Reader {
             }
             Err(TryRecvError::Empty) => ret,
         }
+    }
+
+    pub fn labels(&self)->&[String]{
+        self.labels.as_ref()
     }
 
     pub fn start_reading(&mut self, path: &str, baud: u32) {
@@ -186,7 +200,7 @@ impl Reader {
     /// reader main function. Reads frames from the serial port and sends them into `frame_tx`
     fn reader_main(
         port: Box<dyn SerialPort>,
-        frame_tx: mpsc::Sender<Frame>,
+        frame_tx: mpsc::Sender<SerialData>,
         status_tx: mpsc::Sender<ReaderStatus>,
         command_rx: mpsc::Receiver<Commands>,
     ) {
@@ -199,6 +213,7 @@ impl Reader {
             .send(ReaderStatus::Running)
             .expect("Main Thread dropped status reciver");
         loop {
+            let mut waiting = true;
             match command_rx.try_recv() {
                 Ok(Commands::Stop) => {
                     if let Some(ref mut wtr) = logger {
@@ -257,25 +272,32 @@ impl Reader {
             match reader.next_frame() {
                 Ok(f) => {
                     err_retry = 0;
-                    if let Some(ref mut wtr) = logger {
-                        let now = start.elapsed().as_millis();
-                        let slice = [
-                            f.sensor_id.to_string(),
-                            f.board_id.to_string(),
-                            now.to_string(),
-                            f.timestamp.to_string(),
-                            f.value.to_string(),
-                        ];
-                        if let Err(e) = wtr.write_record(slice) {
-                            status_tx
-                                .send(ReaderStatus::LogErr(e.to_string()))
-                                .expect("Main Thread dropped status reciver");
-                            logger = None;
-                        }
-                    }
+                    // if let Some(ref mut wtr) = logger {
+                    //     let now = start.elapsed().as_millis();
+                    //     let slice = [
+                    //         f.sensor_id.to_string(),
+                    //         f.board_id.to_string(),
+                    //         now.to_string(),
+                    //         f.timestamp.to_string(),
+                    //         f.value.to_string(),
+                    //     ];
+                    //     if let Err(e) = wtr.write_record(slice) {
+                    //         status_tx
+                    //             .send(ReaderStatus::LogErr(e.to_string()))
+                    //             .expect("Main Thread dropped status reciver");
+                    //         logger = None;
+                    //     }
+                    // }
                     frame_tx.send(f).expect("Main Thread dropped frame reciver");
                 }
+
                 Err(e) => {
+                    match e.kind() {
+                        io::ErrorKind::TimedOut => {
+                            if waiting {continue;}
+                        }
+                        _ => (),
+                    }
                     err_retry += 1;
                     error!("{e:?}");
                     if err_retry > 3 {
@@ -298,35 +320,38 @@ impl FrameReader {
         }
     }
 
-    fn next_frame(&mut self) -> io::Result<Frame> {
+    fn next_frame(&mut self) -> io::Result<SerialData> {
         self.port.read_line(&mut self.buf)?;
-        let res = self.buf.as_str().try_into();
+        let res = SerialData::try_from(self.buf.as_str());
         self.buf.clear();
         res
     }
 }
 
-impl TryFrom<&str> for Frame {
-    type Error = io::Error;
 
-    fn try_from(slice: &str) -> Result<Self, Self::Error> {
-        lazy_static! {
-            static ref RE: Regex = Regex::new(r"b=(\d+) s=(\d+) v=(\d+) t=(\d+)\s*").unwrap();
+impl SerialData{
+    fn try_from(slice: &str) -> Result<SerialData, io::Error> {
+        dbg!(slice);
+        let Some(slice) = slice.strip_suffix("\r\n") else {
+            return Ok(Self::Other(slice.to_owned()));
+        };
+        
+        if slice.starts_with("#L "){
+            println!("labels:");
+            let slice = &slice[3..];
+            let this = Self::Labels(slice.split("; ").map(|s|s.to_owned()).collect());
+            return Ok(this);
         }
 
-        if let Some(cap) = RE.captures(slice) {
-            let board_id: u8 = cap[1].parse().unwrap();
-            let sensor_id: u8 = cap[2].parse().unwrap();
-            let value: u16 = cap[3].parse().unwrap();
-            let timestamp: u32 = cap[4].parse().unwrap();
-            Ok(Frame {
-                board_id,
-                sensor_id,
-                value,
-                timestamp,
-            })
-        } else {
-            Err(io::Error::new(io::ErrorKind::InvalidData, slice.to_owned()))
+        let mut data: Vec<i32> = Vec::new();
+        for substr in slice.split(" ") {
+            let Ok(i) =  dbg!(substr).parse() else {
+                return Ok(Self::Other(slice.to_owned()));
+            };
+            data.push(i);
         }
+        
+        return Ok(Self::Values(data));
+
     }
 }
