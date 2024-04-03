@@ -176,8 +176,8 @@ impl Reader {
         status_tx
             .send(ReaderStatus::Running)
             .expect("Main Thread dropped status reciver");
+        let waiting = true;
         loop {
-            let waiting = true;
             match command_rx.try_recv() {
                 Ok(Commands::Stop) => {
                     if let Some(ref mut wtr) = logger {
@@ -241,7 +241,6 @@ impl FrameReader {
 
 impl SerialData {
     fn try_from(slice: &str) -> Result<SerialData, io::Error> {
-        dbg!(slice);
         let Some(slice) = slice.strip_suffix("\r\n") else {
             return Ok(Self::Other(slice.to_owned()));
         };
@@ -255,7 +254,7 @@ impl SerialData {
 
         let mut data: Vec<i32> = Vec::new();
         for substr in slice.split(' ') {
-            let Ok(i) = dbg!(substr).parse() else {
+            let Ok(i) = substr.parse() else {
                 return Ok(Self::Other(slice.to_owned()));
             };
             data.push(i);
