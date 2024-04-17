@@ -9,9 +9,7 @@ use std::{
 };
 
 use csv::Writer;
-use lazy_static::lazy_static;
 use log::error;
-use regex::Regex;
 use serialport::SerialPort;
 
 enum Commands {
@@ -24,7 +22,7 @@ enum Commands {
 struct Frame {
     board_id: u8,
     sensor_id: u8,
-    value: u16,
+    value: i16,
     timestamp: u32,
 }
 
@@ -310,23 +308,27 @@ impl TryFrom<&str> for Frame {
     type Error = io::Error;
 
     fn try_from(slice: &str) -> Result<Self, Self::Error> {
-        lazy_static! {
-            static ref RE: Regex = Regex::new(r"b=(\d+) s=(\d+) v=(\d+) t=(\d+)\s*").unwrap();
-        }
+        let values: Vec<_> = slice
+            .strip_prefix("\r")
+            .and_then(|ok|ok.strip_suffix("\n"))
+            .ok_or(io::Error::new(io::ErrorKind::InvalidData, slice.to_owned()))?
+            .split(" ")
+            .filter(|s| !s.is_empty())
+            .collect();
+        
+        if values.len() != 4 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, slice.to_owned()));
+        };
 
-        if let Some(cap) = RE.captures(slice) {
-            let board_id: u8 = cap[1].parse().unwrap();
-            let sensor_id: u8 = cap[2].parse().unwrap();
-            let value: u16 = cap[3].parse().unwrap();
-            let timestamp: u32 = cap[4].parse().unwrap();
-            Ok(Frame {
-                board_id,
-                sensor_id,
-                value,
-                timestamp,
-            })
-        } else {
-            Err(io::Error::new(io::ErrorKind::InvalidData, slice.to_owned()))
-        }
+        let sensor_id: u8 = values[0].parse().unwrap();
+        let board_id: u8 = values[1].parse().unwrap();
+        let value: i16 = values[2].parse().unwrap();
+        let timestamp: u32 = values[3].parse().unwrap();
+        Ok(Frame {
+            board_id,
+            sensor_id,
+            value,
+            timestamp,
+        })
     }
 }

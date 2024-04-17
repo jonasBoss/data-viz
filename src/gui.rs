@@ -42,7 +42,7 @@ impl MyApp {
 
         Self {
             path: "/dev/ttyUSB0".to_owned(),
-            baud: 921_600,
+            baud: 2_000_000,
             reader: Default::default(),
             sensors: Default::default(),
             boards: Default::default(),
@@ -62,7 +62,7 @@ impl MyApp {
             ui.end_row();
 
             ui.label("Baudrate:");
-            egui::Slider::new(&mut self.baud, 9600..=921_600).ui(ui);
+            egui::Slider::new(&mut self.baud, 9600..=2_000_000).ui(ui);
             //ui.label(format!("{}", self.baud));
             ui.end_row();
 
