@@ -22,7 +22,7 @@ enum Commands {
 struct Frame {
     board_id: u8,
     sensor_id: u8,
-    value: i16,
+    value: i32,
     timestamp: u32,
 }
 
@@ -320,10 +320,10 @@ impl TryFrom<&str> for Frame {
             return Err(io::Error::new(io::ErrorKind::InvalidData, slice.to_owned()));
         };
 
-        let sensor_id: u8 = values[0].parse().unwrap();
-        let board_id: u8 = values[1].parse().unwrap();
-        let value: i16 = values[2].parse().unwrap();
-        let timestamp: u32 = values[3].parse().unwrap();
+        let sensor_id: u8 = values[0].parse().expect(slice);
+        let board_id: u8 = values[1].parse().expect(slice);
+        let value: i32 = values[2].parse().expect(slice);
+        let timestamp: u32 = values[3].parse().expect(slice);
         Ok(Frame {
             board_id,
             sensor_id,
