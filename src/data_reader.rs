@@ -9,7 +9,9 @@ use std::{
 };
 
 use csv::Writer;
+use lazy_static::lazy_static;
 use log::error;
+use regex::Regex;
 use serialport::SerialPort;
 
 enum Commands {
@@ -19,11 +21,17 @@ enum Commands {
 }
 
 #[derive(Debug)]
-struct Frame {
-    board_id: u8,
-    sensor_id: u8,
-    value: i32,
-    timestamp: u32,
+enum Frame {
+    Measurement {
+        board_id: u8,
+        sensor_id: u8,
+        value: i32,
+        timestamp: u32,
+    },
+    Label {
+        sensor_id: u8,
+        label: String,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -32,6 +40,8 @@ pub struct Reader {
     status: ReaderStatus,
     /// {(board_id, sensor_id) ->  data}
     pub data: HashMap<(u8, u8), Vec<[f64; 2]>>,
+    /// {sensor_id -> label}
+    pub labels: HashMap<u8, String>,
 }
 
 #[derive(Debug)]
@@ -72,11 +82,19 @@ impl Reader {
 
         let e = loop {
             match r.frame_rx.try_recv() {
-                Ok(f) => self
+                Ok(Frame::Measurement {
+                    board_id,
+                    sensor_id,
+                    value,
+                    timestamp,
+                }) => self
                     .data
-                    .entry((f.board_id, f.sensor_id))
+                    .entry((board_id, sensor_id))
                     .or_default()
-                    .push([f.timestamp as f64, f.value as f64]),
+                    .push([timestamp as f64, value as f64]),
+                Ok(Frame::Label { sensor_id, label }) => {
+                    self.labels.entry(sensor_id).or_insert(label);
+                }
                 Err(e) => break e,
             }
         };
@@ -255,14 +273,23 @@ impl Reader {
             match reader.next_frame() {
                 Ok(f) => {
                     err_retry = 0;
-                    if let Some(ref mut wtr) = logger {
+                    if let (
+                        Some(ref mut wtr),
+                        Frame::Measurement {
+                            board_id,
+                            sensor_id,
+                            value,
+                            timestamp,
+                        },
+                    ) = (&mut logger, &f)
+                    {
                         let now = start.elapsed().as_millis();
                         let slice = [
-                            f.sensor_id.to_string(),
-                            f.board_id.to_string(),
+                            sensor_id.to_string(),
+                            board_id.to_string(),
                             now.to_string(),
-                            f.timestamp.to_string(),
-                            f.value.to_string(),
+                            timestamp.to_string(),
+                            value.to_string(),
                         ];
                         if let Err(e) = wtr.write_record(slice) {
                             status_tx
@@ -307,15 +334,28 @@ impl FrameReader {
 impl TryFrom<&str> for Frame {
     type Error = io::Error;
 
-    fn try_from(slice: &str) -> Result<Self, Self::Error> {
-        let values: Vec<_> = slice
-            .strip_prefix("\r")
-            .and_then(|ok|ok.strip_suffix("\n"))
-            .ok_or(io::Error::new(io::ErrorKind::InvalidData, slice.to_owned()))?
-            .split(" ")
-            .filter(|s| !s.is_empty())
-            .collect();
-        
+    fn try_from(mut slice: &str) -> Result<Self, Self::Error> {
+        slice = slice.trim();
+        lazy_static! {
+            static ref REGEX: Regex = Regex::new(r"^(\d+)\s+(.+)$").unwrap();
+        }
+        if let Some((Some(id_s), Some(name))) = slice
+            .strip_prefix("#L ")
+            .and_then(|s| REGEX.captures(s))
+            .map(|cap| {
+                (
+                    cap.get(1).map(|m| m.as_str()),
+                    cap.get(2).map(|m| m.as_str()),
+                )
+            })
+        {
+            let sensor_id: u8 = id_s.parse().expect(slice);
+            let label = name.to_owned();
+            return Ok(Frame::Label { sensor_id, label });
+        }
+
+        let values: Vec<_> = slice.trim().split(" ").filter(|s| !s.is_empty()).collect();
+
         if values.len() != 4 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, slice.to_owned()));
         };
@@ -324,7 +364,7 @@ impl TryFrom<&str> for Frame {
         let board_id: u8 = values[1].parse().expect(slice);
         let value: i32 = values[2].parse().expect(slice);
         let timestamp: u32 = values[3].parse().expect(slice);
-        Ok(Frame {
+        Ok(Frame::Measurement {
             board_id,
             sensor_id,
             value,
