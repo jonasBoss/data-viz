@@ -354,7 +354,7 @@ impl TryFrom<&str> for Frame {
             return Ok(Frame::Label { sensor_id, label });
         }
 
-        let values: Vec<_> = slice.trim().split(" ").filter(|s| !s.is_empty()).collect();
+        let values: Vec<_> = slice.trim().split(' ').filter(|s| !s.is_empty()).collect();
 
         if values.len() != 4 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, slice.to_owned()));

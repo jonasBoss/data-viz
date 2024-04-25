@@ -134,7 +134,14 @@ impl MyApp {
         ui.label("Sensors:");
         for sensor_id in self.reader.data.keys().map(|(_, s)| s).sorted().dedup() {
             let mut selected = self.sensors.contains(sensor_id);
-            ui.toggle_value(&mut selected, format!("Show Sensor {sensor_id}"));
+            let sensor = self
+                .reader
+                .labels
+                .get(sensor_id)
+                .map(Clone::clone)
+                .unwrap_or_else(|| format!("Sensor {sensor_id}"));
+
+            ui.toggle_value(&mut selected, format!("Show {sensor}"));
             if selected {
                 self.sensors.insert(*sensor_id);
             } else {
@@ -152,9 +159,15 @@ impl MyApp {
                 .iter()
                 .filter(|((b, s), _)| self.boards.contains(b) && self.sensors.contains(s))
             {
+                let sensor = self
+                    .reader
+                    .labels
+                    .get(sensor_id)
+                    .map(Clone::clone)
+                    .unwrap_or_else(|| format!("Sensor: {sensor_id}"));
                 plt_ui.line(
                     Line::new(PlotPoints::from(data.clone()))
-                        .name(format!("Senosr: {sensor_id} Board: {board_id}")),
+                        .name(format!("{sensor} Board: {board_id}")),
                 );
             }
         });
