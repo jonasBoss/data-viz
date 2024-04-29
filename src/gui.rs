@@ -123,6 +123,7 @@ impl MyApp {
         ui.separator();
         egui::ScrollArea::vertical()
             .scroll_bar_visibility(scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
+            .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.label("Boards:");
                 for board_id in self.reader.data.keys().map(|(b, _)| b).sorted().dedup() {
