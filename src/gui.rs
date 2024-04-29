@@ -5,7 +5,7 @@ use std::{
 };
 
 use dirs::home_dir;
-use eframe::egui::{self, Ui, Widget};
+use eframe::egui::{self, scroll_area, Ui, Widget};
 use egui_file::FileDialog;
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 use itertools::Itertools;
@@ -121,33 +121,37 @@ impl MyApp {
         });
 
         ui.separator();
-        ui.label("Boards:");
-        for board_id in self.reader.data.keys().map(|(b, _)| b).sorted().dedup() {
-            let mut selected = self.boards.contains(board_id);
-            ui.toggle_value(&mut selected, format!("Show Board {board_id}"));
-            if selected {
-                self.boards.insert(*board_id);
-            } else {
-                self.boards.remove(board_id);
-            }
-        }
-        ui.label("Sensors:");
-        for sensor_id in self.reader.data.keys().map(|(_, s)| s).sorted().dedup() {
-            let mut selected = self.sensors.contains(sensor_id);
-            let sensor = self
-                .reader
-                .labels
-                .get(sensor_id)
-                .map(Clone::clone)
-                .unwrap_or_else(|| format!("Sensor {sensor_id}"));
+        egui::ScrollArea::vertical()
+            .scroll_bar_visibility(scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
+            .show(ui, |ui| {
+                ui.label("Boards:");
+                for board_id in self.reader.data.keys().map(|(b, _)| b).sorted().dedup() {
+                    let mut selected = self.boards.contains(board_id);
+                    ui.toggle_value(&mut selected, format!("Show Board {board_id}"));
+                    if selected {
+                        self.boards.insert(*board_id);
+                    } else {
+                        self.boards.remove(board_id);
+                    }
+                }
+                ui.label("Sensors:");
+                for sensor_id in self.reader.data.keys().map(|(_, s)| s).sorted().dedup() {
+                    let mut selected = self.sensors.contains(sensor_id);
+                    let sensor = self
+                        .reader
+                        .labels
+                        .get(sensor_id)
+                        .map(Clone::clone)
+                        .unwrap_or_else(|| format!("Sensor {sensor_id}"));
 
-            ui.toggle_value(&mut selected, format!("Show {sensor}"));
-            if selected {
-                self.sensors.insert(*sensor_id);
-            } else {
-                self.sensors.remove(sensor_id);
-            }
-        }
+                    ui.toggle_value(&mut selected, format!("Show {sensor}"));
+                    if selected {
+                        self.sensors.insert(*sensor_id);
+                    } else {
+                        self.sensors.remove(sensor_id);
+                    }
+                }
+            });
     }
 
     fn show_plot(&mut self, ui: &mut Ui) {
